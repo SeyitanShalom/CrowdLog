@@ -1,0 +1,17 @@
+{
+  "name": "@crowdlog/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint src ../../packages/shared/src"
+  },
+  "dependencies": {
+    "@crowdlog/shared": "file:../../packages/shared",
+    "next": "16.3.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

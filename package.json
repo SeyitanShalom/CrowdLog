@@ -2,11 +2,15 @@
   "name": "crowdlog",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev": "npm run dev --workspace @crowdlog/web",
+    "build": "npm run build --workspace @crowdlog/web",
+    "start": "npm run start --workspace @crowdlog/web",
+    "lint": "eslint apps/web/src packages/shared/src"
   },
   "dependencies": {
     "next": "16.3.5",

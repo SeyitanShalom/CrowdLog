@@ -3,14 +3,24 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
 const eslintConfig = defineConfig([
+  {
+    settings: {
+      next: {
+        rootDir: "apps/web/",
+      },
+    },
+  },
   ...nextVitals,
   ...nextTs,
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    "apps/web/.next/**",
     "out/**",
+    "apps/web/out/**",
     "build/**",
+    "apps/web/build/**",
     "next-env.d.ts",
   ]),
 ]);
