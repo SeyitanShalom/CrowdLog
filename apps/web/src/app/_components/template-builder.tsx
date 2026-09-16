@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FIELD_TYPES,
   dedupeFieldKey,
@@ -13,9 +13,11 @@ import {
   type FieldType,
   type TemplateField,
 } from "@crowdlog/shared";
-
-const STORAGE_KEY = "crowdlog.saved-events.v1";
-const STORAGE_EVENT = "crowdlog:saved-events";
+import {
+  createEvent,
+  listEvents,
+  type CreateEventPayload,
+} from "@/lib/api-client";
 
 const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   text: "Text",
@@ -135,46 +137,6 @@ function eventToDraft(event: CrowdLogEvent): EventDraft {
   };
 }
 
-function subscribeToSavedEvents(onStoreChange: () => void) {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(STORAGE_EVENT, onStoreChange);
-
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(STORAGE_EVENT, onStoreChange);
-  };
-}
-
-function getSavedEventsSnapshot() {
-  if (typeof window === "undefined") {
-    return "[]";
-  }
-
-  return window.localStorage.getItem(STORAGE_KEY) ?? "[]";
-}
-
-function getServerSavedEventsSnapshot() {
-  return "[]";
-}
-
-function parseSavedEvents(snapshot: string): CrowdLogEvent[] {
-  try {
-    const parsedValue = JSON.parse(snapshot);
-    return Array.isArray(parsedValue) ? (parsedValue as CrowdLogEvent[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeSavedEvents(events: CrowdLogEvent[]) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
-  window.dispatchEvent(new Event(STORAGE_EVENT));
-}
-
 type StatusMessage = {
   tone: "success" | "error" | "info";
   text: string;
@@ -182,16 +144,41 @@ type StatusMessage = {
 
 export function TemplateBuilder() {
   const [draft, setDraft] = useState<EventDraft>(starterDraft);
+  const [savedEvents, setSavedEvents] = useState<CrowdLogEvent[]>([]);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<StatusMessage>(null);
-  const savedEventsSnapshot = useSyncExternalStore(
-    subscribeToSavedEvents,
-    getSavedEventsSnapshot,
-    getServerSavedEventsSnapshot,
-  );
-  const savedEvents = useMemo(
-    () => parseSavedEvents(savedEventsSnapshot),
-    [savedEventsSnapshot],
-  );
+
+  useEffect(() => {
+    let shouldIgnore = false;
+
+    async function loadEvents() {
+      try {
+        const events = await listEvents();
+
+        if (!shouldIgnore) {
+          setSavedEvents(events);
+        }
+      } catch {
+        if (!shouldIgnore) {
+          setStatus({
+            tone: "error",
+            text: "Could not load saved events from the API.",
+          });
+        }
+      } finally {
+        if (!shouldIgnore) {
+          setIsLoadingEvents(false);
+        }
+      }
+    }
+
+    void loadEvents();
+
+    return () => {
+      shouldIgnore = true;
+    };
+  }, []);
 
   const templateFields = useMemo(
     () =>
@@ -305,7 +292,7 @@ export function TemplateBuilder() {
     });
   }
 
-  function saveEventTemplate() {
+  async function saveEventTemplate() {
     const title = draft.title.trim();
     const templateName = draft.templateName.trim();
     const fields = templateFields;
@@ -325,29 +312,36 @@ export function TemplateBuilder() {
       return;
     }
 
-    const now = new Date().toISOString();
-    const eventId = makeClientId("event");
-
-    const event: CrowdLogEvent = {
-      id: eventId,
+    const payload: CreateEventPayload = {
       title,
       description: draft.description.trim(),
-      eventDate: draft.eventDate,
-      createdAt: now,
-      updatedAt: now,
-      template: {
-        id: makeClientId("template"),
-        eventId,
-        name: templateName,
-        isDefault: true,
-        fields,
-        createdAt: now,
-        updatedAt: now,
-      },
+      eventDate: draft.eventDate || undefined,
+      templateName,
+      fields: fields.map((field) => ({
+        label: field.label,
+        key: field.key,
+        type: field.type,
+        required: field.required,
+        sortOrder: field.sortOrder,
+        aliases: field.aliases,
+        options: field.options,
+      })),
     };
 
-    writeSavedEvents([event, ...savedEvents]);
-    setStatus({ tone: "success", text: "Event template saved." });
+    setIsSaving(true);
+
+    try {
+      const event = await createEvent(payload);
+      setSavedEvents((currentEvents) => [event, ...currentEvents]);
+      setStatus({ tone: "success", text: "Event template saved to Supabase." });
+    } catch {
+      setStatus({
+        tone: "error",
+        text: "Could not save the event. Make sure the API is running.",
+      });
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function resetDraft() {
@@ -626,9 +620,10 @@ export function TemplateBuilder() {
                   <button
                     type="button"
                     onClick={saveEventTemplate}
-                    className="h-11 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] focus:outline-none focus:ring-2 focus:ring-[#a8d3b7]"
+                    disabled={isSaving}
+                    className="h-11 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-[#a8d3b7]"
                   >
-                    Save event template
+                    {isSaving ? "Saving..." : "Save event template"}
                   </button>
                 </div>
               </div>
@@ -679,7 +674,11 @@ export function TemplateBuilder() {
               </h2>
             </div>
             <div className="divide-y divide-[#e5e9e2]">
-              {savedEvents.length === 0 ? (
+              {isLoadingEvents ? (
+                <p className="px-4 py-4 text-sm text-[#667265]">
+                  Loading saved events...
+                </p>
+              ) : savedEvents.length === 0 ? (
                 <p className="px-4 py-4 text-sm text-[#667265]">
                   No saved templates yet.
                 </p>

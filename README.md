@@ -44,6 +44,7 @@ The project is now organized as an npm workspace monorepo:
 crowdlog/
   apps/
     web/             # Next.js frontend
+    api/             # Backend API and Prisma schema
   packages/
     shared/          # shared TypeScript types and helper functions
 ```
@@ -65,9 +66,9 @@ language as the frontend.
 ## Learning Phases
 
 1. Set up the TypeScript monorepo foundation. Done.
-2. Design the Prisma database schema.
-3. Build the event/template/template-field API.
-4. Build the frontend dashboard for creating events and fields.
+2. Design the Prisma database schema. Done.
+3. Build the event/template/template-field API. Done.
+4. Build the frontend dashboard for creating events and fields. Done.
 5. Add mock OCR data for extracted attendance rows.
 6. Build the review screen for correcting extracted records.
 7. Add file upload.
@@ -109,6 +110,12 @@ Useful scripts:
 npm run dev
 npm run lint
 npm run build
+npm run build:api
+npm run db:validate
+npm run db:format
+npm run db:generate
+npm run db:migrate
+npm run db:studio
 ```
 
 The main frontend files are:
@@ -118,11 +125,49 @@ apps/web/src/app/page.tsx
 apps/web/src/app/_components/template-builder.tsx
 ```
 
+The frontend now reads and saves events through the API. For local development,
+copy `apps/web/.env.example` to `apps/web/.env.local` if you need to customize
+the API URL:
+
+```env
+NEXT_PUBLIC_API_URL="http://localhost:4000"
+```
+
+Run the API and web app in separate terminals:
+
+```bash
+npm run build:api
+npm run start:api
+```
+
+```bash
+npm run dev
+```
+
 The shared domain files are:
 
 ```text
 packages/shared/src/crowdlog-types.ts
 packages/shared/src/template-utils.ts
+```
+
+The Prisma schema is:
+
+```text
+apps/api/prisma/schema.prisma
+```
+
+The first migration is:
+
+```text
+apps/api/prisma/migrations/20260916000000_init_dynamic_templates/migration.sql
+```
+
+If Docker is installed, start the local PostgreSQL database with:
+
+```bash
+docker compose up -d postgres
+npm run db:migrate
 ```
 
 ## Next Phase

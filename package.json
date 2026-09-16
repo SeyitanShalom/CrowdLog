@@ -8,9 +8,18 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @crowdlog/web",
+    "dev:api": "npm run dev --workspace @crowdlog/api",
     "build": "npm run build --workspace @crowdlog/web",
+    "build:api": "npm run build --workspace @crowdlog/api",
     "start": "npm run start --workspace @crowdlog/web",
-    "lint": "eslint apps/web/src packages/shared/src"
+    "start:api": "npm run start --workspace @crowdlog/api",
+    "lint": "eslint apps/web/src apps/api/src packages/shared/src",
+    "db:validate": "npm run db:validate --workspace @crowdlog/api",
+    "db:format": "npm run db:format --workspace @crowdlog/api",
+    "db:generate": "npm run db:generate --workspace @crowdlog/api",
+    "db:migrate": "npm run db:migrate --workspace @crowdlog/api",
+    "db:deploy": "npm run db:deploy --workspace @crowdlog/api",
+    "db:studio": "npm run db:studio --workspace @crowdlog/api"
   },
   "dependencies": {
     "next": "16.3.5",

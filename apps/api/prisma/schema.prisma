@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TemplateFieldType {
+  TEXT      @map("text")
+  EMAIL     @map("email")
+  PHONE     @map("phone")
+  NUMBER    @map("number")
+  SIGNATURE @map("signature")
+  DATE      @map("date")
+  SELECT    @map("select")
+
+  @@map("template_field_type")
+}
+
+enum AttendanceDocumentStatus {
+  UPLOADED   @map("uploaded")
+  PROCESSING @map("processing")
+  EXTRACTED  @map("extracted")
+  REVIEWED   @map("reviewed")
+  APPROVED   @map("approved")
+  FAILED     @map("failed")
+
+  @@map("attendance_document_status")
+}
+
+enum AttendanceRecordStatus {
+  DRAFT        @map("draft")
+  NEEDS_REVIEW @map("needs_review")
+  APPROVED     @map("approved")
+  REJECTED     @map("rejected")
+
+  @@map("attendance_record_status")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  events    Event[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Event {
+  id          String               @id @default(cuid())
+  title       String
+  description String?
+  eventDate   DateTime?            @map("event_date")
+  ownerId     String?              @map("owner_id")
+  owner       User?                @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  templates   AttendanceTemplate[]
+  documents   AttendanceDocument[]
+  records     AttendanceRecord[]
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  @@index([ownerId])
+  @@map("events")
+}
+
+model AttendanceTemplate {
+  id        String          @id @default(cuid())
+  eventId   String          @map("event_id")
+  event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name      String
+  isDefault Boolean         @default(false) @map("is_default")
+  fields    TemplateField[]
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  @@index([eventId])
+  @@map("attendance_templates")
+}
+
+model TemplateField {
+  id         String                  @id @default(cuid())
+  templateId String                  @map("template_id")
+  template   AttendanceTemplate      @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  label      String
+  key        String
+  type       TemplateFieldType
+  required   Boolean                 @default(false)
+  sortOrder  Int                     @default(0) @map("sort_order")
+  aliases    Json                    @default("[]")
+  options    Json                    @default("[]")
+  values     AttendanceRecordValue[]
+  createdAt  DateTime                @default(now()) @map("created_at")
+  updatedAt  DateTime                @updatedAt @map("updated_at")
+
+  @@unique([templateId, key])
+  @@index([templateId])
+  @@map("template_fields")
+}
+
+model AttendanceDocument {
+  id         String                   @id @default(cuid())
+  eventId    String                   @map("event_id")
+  event      Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  fileName   String                   @map("file_name")
+  fileType   String?                  @map("file_type")
+  fileUrl    String                   @map("file_url")
+  status     AttendanceDocumentStatus @default(UPLOADED)
+  rawOcrJson Json?                    @map("raw_ocr_json")
+  records    AttendanceRecord[]
+  createdAt  DateTime                 @default(now()) @map("created_at")
+  updatedAt  DateTime                 @updatedAt @map("updated_at")
+
+  @@index([eventId])
+  @@map("attendance_documents")
+}
+
+model AttendanceRecord {
+  id              String                  @id @default(cuid())
+  eventId         String                  @map("event_id")
+  event           Event                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  documentId      String?                 @map("document_id")
+  document        AttendanceDocument?     @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  rowNumber       Int?                    @map("row_number")
+  dataJson        Json                    @default("{}") @map("data_json")
+  confidenceScore Float?                  @map("confidence_score")
+  status          AttendanceRecordStatus  @default(DRAFT)
+  values          AttendanceRecordValue[]
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  @@index([eventId])
+  @@index([documentId])
+  @@map("attendance_records")
+}
+
+model AttendanceRecordValue {
+  id              String           @id @default(cuid())
+  recordId        String           @map("record_id")
+  record          AttendanceRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  fieldId         String           @map("field_id")
+  field           TemplateField    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  rawValue        String?          @map("raw_value")
+  normalizedValue String?          @map("normalized_value")
+  confidence      Float?
+  boundingBox     Json?            @map("bounding_box")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@unique([recordId, fieldId])
+  @@index([fieldId])
+  @@map("attendance_record_values")
+}
