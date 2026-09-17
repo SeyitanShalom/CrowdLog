@@ -7,15 +7,28 @@ import {
   makeClientId,
   normalizeFieldKey,
   splitCommaList,
+  type AttendanceDocumentSummary,
+  type AttendanceRecord,
   type CrowdLogEvent,
   type DraftField,
   type EventDraft,
   type FieldType,
+  type RecordCellValue,
+  type RecordStatus,
   type TemplateField,
 } from "@crowdlog/shared";
 import {
+  approveAttendanceRecord,
   createEvent,
+  getApiFileUrl,
+  listDocuments,
   listEvents,
+  listRecords,
+  mockExtractDocument,
+  mockExtractRecords,
+  rejectAttendanceRecord,
+  updateAttendanceRecord,
+  uploadAttendanceDocument,
   type CreateEventPayload,
 } from "@/lib/api-client";
 
@@ -27,6 +40,13 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   signature: "Signature",
   date: "Date",
   select: "Select",
+};
+
+const RECORD_STATUS_LABELS: Record<RecordStatus, string> = {
+  draft: "Draft",
+  needs_review: "Needs review",
+  approved: "Approved",
+  rejected: "Rejected",
 };
 
 const starterDraft: EventDraft = {
@@ -137,6 +157,26 @@ function eventToDraft(event: CrowdLogEvent): EventDraft {
   };
 }
 
+function valueToString(value: RecordCellValue | undefined) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value);
+}
+
+function valueToBoolean(value: RecordCellValue | undefined) {
+  return value === true || value === "true" || value === "signed";
+}
+
+function confidenceLabel(confidence: number | null | undefined) {
+  if (confidence === null || confidence === undefined) {
+    return "n/a";
+  }
+
+  return `${Math.round(confidence * 100)}%`;
+}
+
 type StatusMessage = {
   tone: "success" | "error" | "info";
   text: string;
@@ -148,6 +188,16 @@ export function TemplateBuilder() {
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<StatusMessage>(null);
+  const [reviewEvent, setReviewEvent] = useState<CrowdLogEvent | null>(null);
+  const [documents, setDocuments] = useState<AttendanceDocumentSummary[]>([]);
+  const [selectedDocumentId, setSelectedDocumentId] = useState("");
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false);
+  const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+  const [isMockExtracting, setIsMockExtracting] = useState(false);
+  const [busyRecordIds, setBusyRecordIds] = useState<string[]>([]);
+  const [reviewStatus, setReviewStatus] = useState<StatusMessage>(null);
 
   useEffect(() => {
     let shouldIgnore = false;
@@ -334,6 +384,14 @@ export function TemplateBuilder() {
       const event = await createEvent(payload);
       setSavedEvents((currentEvents) => [event, ...currentEvents]);
       setStatus({ tone: "success", text: "Event template saved to Supabase." });
+      setReviewEvent(event);
+      setDocuments([]);
+      setSelectedDocumentId("");
+      setRecords([]);
+      setReviewStatus({
+        tone: "info",
+        text: "Template ready for mock extraction.",
+      });
     } catch {
       setStatus({
         tone: "error",
@@ -355,6 +413,191 @@ export function TemplateBuilder() {
   function loadSavedEvent(event: CrowdLogEvent) {
     setDraft(eventToDraft(event));
     setStatus({ tone: "info", text: "Saved event loaded into the editor." });
+  }
+
+  async function selectReviewEvent(event: CrowdLogEvent) {
+    setReviewEvent(event);
+    setIsLoadingRecords(true);
+    setIsLoadingDocuments(true);
+    setReviewStatus({ tone: "info", text: "Loading documents and records." });
+
+    try {
+      const [nextDocuments, nextRecords] = await Promise.all([
+        listDocuments(event.id),
+        listRecords(event.id),
+      ]);
+      setDocuments(nextDocuments);
+      setSelectedDocumentId(nextDocuments[0]?.id ?? "");
+      setRecords(nextRecords);
+      setReviewStatus(
+        nextRecords.length
+          ? { tone: "success", text: "Review records loaded." }
+          : { tone: "info", text: "No extracted records for this event yet." },
+      );
+    } catch {
+      setDocuments([]);
+      setSelectedDocumentId("");
+      setRecords([]);
+      setReviewStatus({
+        tone: "error",
+        text: "Could not load documents and records for review.",
+      });
+    } finally {
+      setIsLoadingRecords(false);
+      setIsLoadingDocuments(false);
+    }
+  }
+
+  async function uploadReviewDocument(file: File) {
+    if (!reviewEvent) {
+      setReviewStatus({ tone: "error", text: "Select a saved event first." });
+      return;
+    }
+
+    setIsUploadingDocument(true);
+    setReviewStatus({ tone: "info", text: "Uploading attendance sheet." });
+
+    try {
+      const document = await uploadAttendanceDocument(reviewEvent.id, file);
+      setDocuments((currentDocuments) => [document, ...currentDocuments]);
+      setSelectedDocumentId(document.id);
+      setReviewStatus({ tone: "success", text: "Attendance sheet uploaded." });
+    } catch {
+      setReviewStatus({
+        tone: "error",
+        text: "Could not upload this attendance sheet.",
+      });
+    } finally {
+      setIsUploadingDocument(false);
+    }
+  }
+
+  async function runMockExtraction() {
+    if (!reviewEvent) {
+      setReviewStatus({ tone: "error", text: "Select a saved event first." });
+      return;
+    }
+
+    setIsMockExtracting(true);
+    setReviewStatus({ tone: "info", text: "Creating mock extracted rows." });
+
+    try {
+      const result = selectedDocumentId
+        ? await mockExtractDocument(selectedDocumentId, 4)
+        : await mockExtractRecords(reviewEvent.id, 4);
+      setRecords((currentRecords) => [...result.records, ...currentRecords]);
+      setDocuments((currentDocuments) => {
+        const hasDocument = currentDocuments.some(
+          (document) => document.id === result.document.id,
+        );
+
+        if (hasDocument) {
+          return currentDocuments.map((document) =>
+            document.id === result.document.id ? result.document : document,
+          );
+        }
+
+        return [result.document, ...currentDocuments];
+      });
+      setSelectedDocumentId(result.document.id);
+      setReviewStatus({
+        tone: "success",
+        text: `Created ${result.records.length} mock rows for review.`,
+      });
+    } catch {
+      setReviewStatus({
+        tone: "error",
+        text: "Could not create mock extracted rows.",
+      });
+    } finally {
+      setIsMockExtracting(false);
+    }
+  }
+
+  function updateRecordCell(
+    recordId: string,
+    fieldKey: string,
+    value: RecordCellValue,
+  ) {
+    setRecords((currentRecords) =>
+      currentRecords.map((record) =>
+        record.id === recordId
+          ? {
+              ...record,
+              status:
+                record.status === "approved" || record.status === "rejected"
+                  ? "needs_review"
+                  : record.status,
+              data: {
+                ...record.data,
+                [fieldKey]: value,
+              },
+            }
+          : record,
+      ),
+    );
+  }
+
+  function setRecordBusy(recordId: string, isBusy: boolean) {
+    setBusyRecordIds((currentIds) =>
+      isBusy
+        ? Array.from(new Set([...currentIds, recordId]))
+        : currentIds.filter((currentId) => currentId !== recordId),
+    );
+  }
+
+  function replaceRecord(updatedRecord: AttendanceRecord) {
+    setRecords((currentRecords) =>
+      currentRecords.map((record) =>
+        record.id === updatedRecord.id ? updatedRecord : record,
+      ),
+    );
+  }
+
+  async function saveRecord(record: AttendanceRecord) {
+    setRecordBusy(record.id, true);
+
+    try {
+      const updatedRecord = await updateAttendanceRecord(record.id, {
+        data: record.data,
+        status: record.status,
+      });
+      replaceRecord(updatedRecord);
+      setReviewStatus({ tone: "success", text: "Row saved." });
+    } catch {
+      setReviewStatus({ tone: "error", text: "Could not save row changes." });
+    } finally {
+      setRecordBusy(record.id, false);
+    }
+  }
+
+  async function approveRecordRow(record: AttendanceRecord) {
+    setRecordBusy(record.id, true);
+
+    try {
+      await updateAttendanceRecord(record.id, { data: record.data });
+      const updatedRecord = await approveAttendanceRecord(record.id);
+      replaceRecord(updatedRecord);
+      setReviewStatus({ tone: "success", text: "Row approved." });
+    } catch {
+      setReviewStatus({ tone: "error", text: "Could not approve row." });
+    } finally {
+      setRecordBusy(record.id, false);
+    }
+  }
+
+  async function rejectRecordRow(record: AttendanceRecord) {
+    setRecordBusy(record.id, true);
+
+    try {
+      const updatedRecord = await rejectAttendanceRecord(record.id);
+      replaceRecord(updatedRecord);
+      setReviewStatus({ tone: "success", text: "Row rejected." });
+    } catch {
+      setReviewStatus({ tone: "error", text: "Could not reject row." });
+    } finally {
+      setRecordBusy(record.id, false);
+    }
   }
 
   return (
@@ -629,6 +872,26 @@ export function TemplateBuilder() {
               </div>
             </div>
           </div>
+
+          <ReviewWorkspace
+            reviewEvent={reviewEvent}
+            documents={documents}
+            selectedDocumentId={selectedDocumentId}
+            records={records}
+            isLoadingDocuments={isLoadingDocuments}
+            isUploadingDocument={isUploadingDocument}
+            isLoadingRecords={isLoadingRecords}
+            isMockExtracting={isMockExtracting}
+            busyRecordIds={busyRecordIds}
+            reviewStatus={reviewStatus}
+            onSelectDocument={setSelectedDocumentId}
+            onUploadDocument={uploadReviewDocument}
+            onMockExtract={runMockExtraction}
+            onCellChange={updateRecordCell}
+            onSave={saveRecord}
+            onApprove={approveRecordRow}
+            onReject={rejectRecordRow}
+          />
         </section>
 
         <aside className="space-y-5 lg:sticky lg:top-5 lg:self-start">
@@ -694,13 +957,22 @@ export function TemplateBuilder() {
                           {event.template.fields.length} fields
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => loadSavedEvent(event)}
-                        className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef]"
-                      >
-                        Load
-                      </button>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => loadSavedEvent(event)}
+                          className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef]"
+                        >
+                          Load
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectReviewEvent(event)}
+                          className="h-9 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41]"
+                        >
+                          Review
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -710,6 +982,523 @@ export function TemplateBuilder() {
         </aside>
       </main>
     </div>
+  );
+}
+
+type ReviewWorkspaceProps = {
+  reviewEvent: CrowdLogEvent | null;
+  documents: AttendanceDocumentSummary[];
+  selectedDocumentId: string;
+  records: AttendanceRecord[];
+  isLoadingDocuments: boolean;
+  isUploadingDocument: boolean;
+  isLoadingRecords: boolean;
+  isMockExtracting: boolean;
+  busyRecordIds: string[];
+  reviewStatus: StatusMessage;
+  onSelectDocument: (documentId: string) => void;
+  onUploadDocument: (file: File) => void;
+  onMockExtract: () => void;
+  onCellChange: (
+    recordId: string,
+    fieldKey: string,
+    value: RecordCellValue,
+  ) => void;
+  onSave: (record: AttendanceRecord) => void;
+  onApprove: (record: AttendanceRecord) => void;
+  onReject: (record: AttendanceRecord) => void;
+};
+
+function ReviewWorkspace({
+  reviewEvent,
+  documents,
+  selectedDocumentId,
+  records,
+  isLoadingDocuments,
+  isUploadingDocument,
+  isLoadingRecords,
+  isMockExtracting,
+  busyRecordIds,
+  reviewStatus,
+  onSelectDocument,
+  onUploadDocument,
+  onMockExtract,
+  onCellChange,
+  onSave,
+  onApprove,
+  onReject,
+}: ReviewWorkspaceProps) {
+  const fields = reviewEvent?.template.fields ?? [];
+  const selectedDocument =
+    documents.find((document) => document.id === selectedDocumentId) ?? null;
+
+  return (
+    <section className="rounded-lg border border-[#d9dfd3] bg-white">
+      <div className="flex flex-col gap-3 border-b border-[#e1e5dc] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div>
+          <h2 className="text-lg font-semibold text-[#172017]">
+            Review extracted records
+          </h2>
+          <p className="mt-1 text-sm text-[#667265]">
+            {reviewEvent
+              ? reviewEvent.title
+              : "Select a saved event to begin review."}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onMockExtract}
+          disabled={!reviewEvent || isMockExtracting}
+          className="h-10 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isMockExtracting
+            ? "Extracting..."
+            : selectedDocument
+              ? "Mock extract selected file"
+              : "Run mock extraction"}
+        </button>
+      </div>
+
+      <div className="grid gap-4 px-4 py-4 sm:px-5 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <DocumentUploadPanel
+            documents={documents}
+            selectedDocumentId={selectedDocumentId}
+            isLoadingDocuments={isLoadingDocuments}
+            isUploadingDocument={isUploadingDocument}
+            disabled={!reviewEvent}
+            onSelectDocument={onSelectDocument}
+            onUploadDocument={onUploadDocument}
+          />
+          <MockDocumentPreview
+            event={reviewEvent}
+            records={records}
+            selectedDocument={selectedDocument}
+          />
+        </div>
+
+        <div className="min-w-0">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2 text-xs font-semibold text-[#3b4a3b]">
+              <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2.5 py-1">
+                Rows: {records.length}
+              </span>
+              <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2.5 py-1">
+                Documents: {documents.length}
+              </span>
+              <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2.5 py-1">
+                Fields: {fields.length}
+              </span>
+            </div>
+            <div className="min-h-5 text-sm">
+              {reviewStatus ? (
+                <p
+                  className={
+                    reviewStatus.tone === "success"
+                      ? "font-medium text-[#2f6f4e]"
+                      : reviewStatus.tone === "error"
+                        ? "font-medium text-[#a33f2f]"
+                        : "font-medium text-[#546657]"
+                  }
+                >
+                  {reviewStatus.text}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-[#dfe4dc]">
+            <table className="min-w-full border-collapse bg-white text-sm">
+              <thead className="bg-[#f6f8f2] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+                <tr>
+                  <th className="w-16 border-b border-[#dfe4dc] px-3 py-3">
+                    Row
+                  </th>
+                  {fields.map((field) => (
+                    <th
+                      key={field.id}
+                      className="min-w-[180px] border-b border-[#dfe4dc] px-3 py-3"
+                    >
+                      {field.label}
+                    </th>
+                  ))}
+                  <th className="w-32 border-b border-[#dfe4dc] px-3 py-3">
+                    Status
+                  </th>
+                  <th className="w-56 border-b border-[#dfe4dc] px-3 py-3">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoadingRecords ? (
+                  <tr>
+                    <td
+                      colSpan={fields.length + 3}
+                      className="px-3 py-6 text-center text-sm text-[#667265]"
+                    >
+                      Loading records...
+                    </td>
+                  </tr>
+                ) : records.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={fields.length + 3}
+                      className="px-3 py-6 text-center text-sm text-[#667265]"
+                    >
+                      No extracted rows yet.
+                    </td>
+                  </tr>
+                ) : (
+                  records.map((record) => {
+                    const isBusy = busyRecordIds.includes(record.id);
+
+                    return (
+                      <tr key={record.id} className="border-t border-[#edf0ea]">
+                        <td className="align-top px-3 py-3 font-semibold text-[#334033]">
+                          {record.rowNumber ?? "-"}
+                        </td>
+                        {fields.map((field) => {
+                          const value = record.values.find(
+                            (recordValue) => recordValue.fieldKey === field.key,
+                          );
+                          const isLowConfidence =
+                            value?.confidence !== null &&
+                            value?.confidence !== undefined &&
+                            value.confidence < 0.75;
+
+                          return (
+                            <td key={field.id} className="align-top px-3 py-3">
+                              <ReviewCell
+                                field={field}
+                                value={record.data[field.key]}
+                                isLowConfidence={isLowConfidence}
+                                confidence={value?.confidence}
+                                disabled={isBusy}
+                                onChange={(nextValue) =>
+                                  onCellChange(record.id, field.key, nextValue)
+                                }
+                              />
+                            </td>
+                          );
+                        })}
+                        <td className="align-top px-3 py-3">
+                          <StatusBadge status={record.status} />
+                        </td>
+                        <td className="align-top px-3 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onSave(record)}
+                              disabled={isBusy}
+                              className="h-9 rounded-md border border-[#cbd5c8] px-3 text-xs font-semibold text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onApprove(record)}
+                              disabled={isBusy}
+                              className="h-9 rounded-md bg-[#2f6f4e] px-3 text-xs font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onReject(record)}
+                              disabled={isBusy}
+                              className="h-9 rounded-md border border-[#d9b7aa] px-3 text-xs font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DocumentUploadPanel({
+  documents,
+  selectedDocumentId,
+  isLoadingDocuments,
+  isUploadingDocument,
+  disabled,
+  onSelectDocument,
+  onUploadDocument,
+}: {
+  documents: AttendanceDocumentSummary[];
+  selectedDocumentId: string;
+  isLoadingDocuments: boolean;
+  isUploadingDocument: boolean;
+  disabled: boolean;
+  onSelectDocument: (documentId: string) => void;
+  onUploadDocument: (file: File) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
+      <div className="mb-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
+          Documents
+        </p>
+        <h3 className="mt-1 text-base font-semibold text-[#172017]">
+          Attendance sheet
+        </h3>
+      </div>
+
+      <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
+        Upload file
+        <input
+          type="file"
+          accept="application/pdf,image/jpeg,image/png,image/webp"
+          disabled={disabled || isUploadingDocument}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+
+            if (file) {
+              onUploadDocument(file);
+              event.target.value = "";
+            }
+          }}
+          className="block w-full rounded-md border border-[#cbd5c8] bg-white text-sm text-[#334033] file:mr-3 file:h-10 file:border-0 file:bg-[#2f6f4e] file:px-3 file:text-sm file:font-semibold file:text-white disabled:cursor-not-allowed disabled:opacity-60"
+        />
+      </label>
+
+      <div className="mt-4">
+        <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
+          Selected file
+          <select
+            value={selectedDocumentId}
+            disabled={disabled || isLoadingDocuments || documents.length === 0}
+            onChange={(event) => onSelectDocument(event.target.value)}
+            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+          >
+            <option value="">
+              {isLoadingDocuments ? "Loading documents..." : "No file selected"}
+            </option>
+            {documents.map((document) => (
+              <option key={document.id} value={document.id}>
+                {document.fileName}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {documents.length > 0 ? (
+        <div className="mt-4 divide-y divide-[#e5e9e2] rounded-md border border-[#e5e9e2] bg-white">
+          {documents.slice(0, 4).map((document) => (
+            <button
+              key={document.id}
+              type="button"
+              onClick={() => onSelectDocument(document.id)}
+              className={`block w-full px-3 py-3 text-left transition hover:bg-[#f6f8f2] ${
+                document.id === selectedDocumentId ? "bg-[#edf3ea]" : ""
+              }`}
+            >
+              <span className="block truncate text-sm font-semibold text-[#172017]">
+                {document.fileName}
+              </span>
+              <span className="mt-1 block text-xs text-[#667265]">
+                {document.status} - {document.recordCount ?? 0} rows
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MockDocumentPreview({
+  event,
+  records,
+  selectedDocument,
+}: {
+  event: CrowdLogEvent | null;
+  records: AttendanceRecord[];
+  selectedDocument: AttendanceDocumentSummary | null;
+}) {
+  const fields = event?.template.fields ?? [];
+  const previewRows = records.slice(0, 5);
+  const fileUrl = selectedDocument ? getApiFileUrl(selectedDocument.fileUrl) : "";
+
+  return (
+    <div className="rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
+      <div className="mb-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
+          Sheet preview
+        </p>
+        <h3 className="mt-1 text-base font-semibold text-[#172017]">
+          {selectedDocument?.fileName ?? event?.title ?? "No event selected"}
+        </h3>
+      </div>
+
+      {selectedDocument ? (
+        <div className="overflow-hidden rounded-md border border-[#d9dfd3] bg-white shadow-sm">
+          <object
+            data={fileUrl}
+            type={selectedDocument.fileType ?? undefined}
+            className="h-[360px] w-full bg-[#f6f8f2]"
+          >
+            <div className="grid h-[360px] place-items-center p-4 text-center text-sm text-[#667265]">
+              Preview unavailable.
+            </div>
+          </object>
+        </div>
+      ) : (
+        <div className="rounded-md border border-[#d9dfd3] bg-white p-3 shadow-sm">
+        <div className="mb-3 flex items-center justify-between border-b border-[#e5e9e2] pb-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
+            Attendance
+          </span>
+          <span className="text-xs text-[#667265]">table style</span>
+        </div>
+        <div className="overflow-hidden rounded-md border border-[#e5e9e2]">
+          <table className="w-full border-collapse text-left text-[11px]">
+            <thead className="bg-[#f6f8f2] text-[#526052]">
+              <tr>
+                {fields.slice(0, 4).map((field) => (
+                  <th key={field.id} className="border-b border-[#e5e9e2] p-2">
+                    {field.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {previewRows.length > 0 ? (
+                previewRows.map((record) => (
+                  <tr key={record.id}>
+                    {fields.slice(0, 4).map((field) => (
+                      <td
+                        key={field.id}
+                        className="border-t border-[#f0f2ed] p-2 text-[#334033]"
+                      >
+                        {valueToString(record.data[field.key]) || "-"}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              ) : (
+                Array.from({ length: 4 }, (_, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {fields.slice(0, 4).map((field) => (
+                      <td
+                        key={field.id}
+                        className="border-t border-[#f0f2ed] p-2 text-[#a1aaa0]"
+                      >
+                        -
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewCell({
+  field,
+  value,
+  isLowConfidence,
+  confidence,
+  disabled,
+  onChange,
+}: {
+  field: TemplateField;
+  value: RecordCellValue | undefined;
+  isLowConfidence: boolean;
+  confidence: number | null | undefined;
+  disabled: boolean;
+  onChange: (value: RecordCellValue) => void;
+}) {
+  const inputClassName = `h-10 w-full rounded-md border px-3 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] ${
+    isLowConfidence
+      ? "border-[#d9a443] bg-[#fff8e6] focus:border-[#b7831e] focus:ring-2 focus:ring-[#f4dda6]"
+      : "border-[#cbd5c8] bg-white focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+  }`;
+
+  return (
+    <div className="grid gap-1.5">
+      {field.type === "signature" ? (
+        <label
+          className={`flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium ${
+            isLowConfidence
+              ? "border-[#d9a443] bg-[#fff8e6] text-[#6b561d]"
+              : "border-[#cbd5c8] bg-white text-[#334033]"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={valueToBoolean(value)}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.checked)}
+            className="h-4 w-4 rounded border-[#aebbac] accent-[#2f6f4e]"
+          />
+          Signed
+        </label>
+      ) : field.type === "select" ? (
+        <select
+          value={valueToString(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          className={inputClassName}
+        >
+          <option value="">Choose</option>
+          {field.options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
+          value={valueToString(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          className={inputClassName}
+        />
+      )}
+
+      {isLowConfidence ? (
+        <span className="text-xs font-semibold text-[#8a6516]">
+          Low confidence: {confidenceLabel(confidence)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: RecordStatus }) {
+  const className =
+    status === "approved"
+      ? "border-[#b8d5bd] bg-[#edf7ef] text-[#2f6f4e]"
+      : status === "rejected"
+        ? "border-[#d9b7aa] bg-[#fff1ed] text-[#8a3d2d]"
+        : status === "needs_review"
+          ? "border-[#d9d0a8] bg-[#fff8e6] text-[#725b16]"
+          : "border-[#d8dfd2] bg-[#fafbf8] text-[#526052]";
+
+  return (
+    <span
+      className={`inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-semibold ${className}`}
+    >
+      {RECORD_STATUS_LABELS[status]}
+    </span>
   );
 }
 

@@ -24,6 +24,9 @@
 **/build
 **/dist
 
+# local uploads
+apps/api/uploads/
+
 # misc
 .DS_Store
 *.pem

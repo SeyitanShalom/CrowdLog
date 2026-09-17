@@ -34,9 +34,16 @@ The current app lets a user:
 - mark fields as required
 - add aliases for future OCR mapping
 - preview the template payload
-- save event templates in browser local storage
+- save event templates through the NestJS API and Prisma
+- load saved events from the database
+- run a mock table extraction for a saved event
+- upload PDF or image attendance sheets into local file storage
+- list uploaded documents for an event
+- run mock extraction against a selected uploaded document
+- review extracted records in an editable table
+- save, approve, or reject extracted rows
 
-There is no OCR, upload, backend API, Prisma schema, or PostgreSQL database yet.
+There is no real OCR, authentication, export, or role system yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -69,9 +76,9 @@ language as the frontend.
 2. Design the Prisma database schema. Done.
 3. Build the event/template/template-field API. Done.
 4. Build the frontend dashboard for creating events and fields. Done.
-5. Add mock OCR data for extracted attendance rows.
-6. Build the review screen for correcting extracted records.
-7. Add file upload.
+5. Add mock OCR data for extracted attendance rows. Done.
+6. Build the review screen for correcting extracted records. Done.
+7. Add file upload. Done.
 8. Integrate a real OCR provider.
 9. Add authentication and roles.
 10. Add export, search, filters, and portfolio polish.
@@ -172,5 +179,7 @@ npm run db:migrate
 
 ## Next Phase
 
-The next backend phase is to design the Prisma schema for `events`,
-`attendance_templates`, `template_fields`, and the later record/document tables.
+The next phase is to introduce an OCR provider boundary while keeping mock OCR
+as the first provider. That gives the app a clean place to later plug in AWS
+Textract, Google Document AI, Azure Document Intelligence, or another real OCR
+service without rewriting the review workflow.

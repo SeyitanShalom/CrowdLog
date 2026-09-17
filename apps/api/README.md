@@ -1,8 +1,7 @@
 # CrowdLog API
 
-This folder will hold the NestJS backend. For this phase, it starts with the
-Prisma database schema so we can design the data model before building API
-controllers.
+This folder holds the NestJS backend, Prisma schema, event/template API, and
+the first mock attendance-record review endpoints.
 
 ## Database Model
 
@@ -59,6 +58,16 @@ POST /events
 GET  /events/:eventId
 POST /events/:eventId/templates
 POST /templates/:templateId/fields
+GET  /events/:eventId/documents
+POST /events/:eventId/documents
+GET  /uploads/:fileName
+GET  /events/:eventId/records
+POST /events/:eventId/records
+POST /events/:eventId/mock-extract
+POST /documents/:documentId/mock-extract
+PATCH /records/:recordId
+POST /records/:recordId/approve
+POST /records/:recordId/reject
 ```
 
 `POST /events` can create an event, its default attendance template, and the

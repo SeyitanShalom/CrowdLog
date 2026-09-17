@@ -41,6 +41,64 @@ export type CrowdLogEvent = {
   updatedAt: string;
 };
 
+export const RECORD_STATUSES = [
+  "draft",
+  "needs_review",
+  "approved",
+  "rejected",
+] as const;
+
+export type RecordStatus = (typeof RECORD_STATUSES)[number];
+
+export type RecordCellValue = string | number | boolean | null;
+
+export type RecordData = Record<string, RecordCellValue>;
+
+export type AttendanceDocumentSummary = {
+  id: string;
+  eventId?: string;
+  fileName: string;
+  fileType: string | null;
+  fileUrl: string;
+  status: string;
+  recordCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AttendanceRecordValue = {
+  id: string;
+  recordId: string;
+  fieldId: string;
+  fieldKey: string;
+  fieldLabel: string;
+  rawValue: string | null;
+  normalizedValue: string | null;
+  confidence: number | null;
+  boundingBox: unknown;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AttendanceRecord = {
+  id: string;
+  eventId: string;
+  documentId: string | null;
+  rowNumber: number | null;
+  data: RecordData;
+  confidenceScore: number | null;
+  status: RecordStatus;
+  document: AttendanceDocumentSummary | null;
+  values: AttendanceRecordValue[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MockExtractionResult = {
+  document: AttendanceDocumentSummary;
+  records: AttendanceRecord[];
+};
+
 export type DraftField = {
   id: string;
   label: string;
