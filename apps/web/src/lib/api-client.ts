@@ -107,18 +107,54 @@ async function request<T>(path: string, init?: RequestInit) {
   const isFormData =
     typeof FormData !== "undefined" && init?.body instanceof FormData;
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      ...init?.headers,
-    },
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...init?.headers,
+      },
+    });
+  } catch {
+    throw new Error(`Could not reach the API at ${API_BASE_URL}.`);
+  }
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Request failed with ${response.status}`);
+    const message = await readErrorMessage(response);
+    throw new Error(
+      message || `API request failed with status ${response.status}.`,
+    );
   }
 
   return (await response.json()) as T;
+}
+
+async function readErrorMessage(response: Response) {
+  const fallback = `${response.status} ${response.statusText}`.trim();
+  const text = await response.text();
+
+  if (!text) {
+    return fallback;
+  }
+
+  try {
+    const body = JSON.parse(text) as { message?: unknown; error?: unknown };
+    const message = Array.isArray(body.message)
+      ? body.message.join(", ")
+      : body.message;
+
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+
+    if (typeof body.error === "string" && body.error.trim()) {
+      return body.error;
+    }
+  } catch {
+    return text;
+  }
+
+  return text || fallback;
 }

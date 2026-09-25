@@ -130,6 +130,10 @@ function reorderFields(fields: DraftField[]) {
   }));
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Please try again.";
+}
+
 function fieldFromDraft(field: DraftField, index: number): TemplateField {
   return {
     id: field.id,
@@ -390,12 +394,12 @@ export function TemplateBuilder() {
       setRecords([]);
       setReviewStatus({
         tone: "info",
-        text: "Template ready for mock extraction.",
+        text: "Template ready for mock rows.",
       });
-    } catch {
+    } catch (error) {
       setStatus({
         tone: "error",
-        text: "Could not save the event. Make sure the API is running.",
+        text: `Could not save the event. ${getErrorMessage(error)}`,
       });
     } finally {
       setIsSaving(false);
@@ -479,13 +483,18 @@ export function TemplateBuilder() {
     }
 
     setIsMockExtracting(true);
-    setReviewStatus({ tone: "info", text: "Creating mock extracted rows." });
+    setReviewStatus({ tone: "info", text: "Generating mock rows." });
 
     try {
       const result = selectedDocumentId
         ? await mockExtractDocument(selectedDocumentId, 4)
         : await mockExtractRecords(reviewEvent.id, 4);
-      setRecords((currentRecords) => [...result.records, ...currentRecords]);
+      setRecords((currentRecords) => [
+        ...result.records,
+        ...currentRecords.filter(
+          (record) => record.documentId !== result.document.id,
+        ),
+      ]);
       setDocuments((currentDocuments) => {
         const hasDocument = currentDocuments.some(
           (document) => document.id === result.document.id,
@@ -502,12 +511,12 @@ export function TemplateBuilder() {
       setSelectedDocumentId(result.document.id);
       setReviewStatus({
         tone: "success",
-        text: `Created ${result.records.length} mock rows for review.`,
+        text: `Generated ${result.records.length} mock rows for review.`,
       });
-    } catch {
+    } catch (error) {
       setReviewStatus({
         tone: "error",
-        text: "Could not create mock extracted rows.",
+        text: `Could not create mock extracted rows. ${getErrorMessage(error)}`,
       });
     } finally {
       setIsMockExtracting(false);
@@ -1052,10 +1061,10 @@ function ReviewWorkspace({
           className="h-10 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isMockExtracting
-            ? "Extracting..."
+            ? "Generating..."
             : selectedDocument
-              ? "Mock extract selected file"
-              : "Run mock extraction"}
+              ? "Generate mock rows for file"
+              : "Generate mock rows"}
         </button>
       </div>
 
@@ -1123,7 +1132,7 @@ function ReviewWorkspace({
                     </th>
                   ))}
                   <th className="w-32 border-b border-[#dfe4dc] px-3 py-3">
-                    Status
+                    Review status
                   </th>
                   <th className="w-56 border-b border-[#dfe4dc] px-3 py-3">
                     Actions

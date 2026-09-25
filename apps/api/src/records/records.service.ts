@@ -1,10 +1,15 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
   AttendanceDocumentStatus,
   AttendanceRecordStatus,
   Prisma,
   type TemplateField,
 } from "@prisma/client";
+import {
+  OCR_PROVIDER,
+  type OcrExtractedRow,
+  type OcrProvider,
+} from "../ocr/ocr-provider.interface";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   type CreateAttendanceRecordInputDto,
@@ -20,7 +25,6 @@ import {
   fromPrismaDocumentStatus,
   toAttendanceDocumentResponse,
 } from "../documents/attendance-document-response.mapper";
-import { buildMockRows, type MockRow } from "./mock-attendance-data";
 import { toPrismaRecordStatus } from "./record-status.mapper";
 
 type RecordCellValue = string | number | boolean | null;
@@ -30,9 +34,17 @@ type TemplateWithFields = {
   fields: TemplateField[];
 };
 
+const EXTRACTION_TRANSACTION_OPTIONS = {
+  maxWait: 10000,
+  timeout: 20000,
+};
+
 @Injectable()
 export class RecordsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(OCR_PROVIDER) private readonly ocrProvider: OcrProvider,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async listRecords(eventId: string) {
     await this.getEventTemplate(eventId);
@@ -63,39 +75,49 @@ export class RecordsService {
 
   async mockExtract(eventId: string, dto: MockExtractDto) {
     const template = await this.getEventTemplate(eventId);
-    const rowCount = dto.rowCount ?? 4;
-    const mockRows = buildMockRows(template.fields, rowCount);
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const document = await tx.attendanceDocument.create({
-        data: {
-          eventId,
-          fileName: `${template.name} mock attendance sheet`,
-          fileType: "mock/table",
-          fileUrl: "mock://table-style-attendance-sheet",
-          status: AttendanceDocumentStatus.EXTRACTED,
-          rawOcrJson: {
-            source: "mock",
-            mode: "table",
-            rows: mockRows.map((row) => row.data),
-          },
-        },
-      });
-
-      const records = await Promise.all(
-        mockRows.map((row) =>
-          tx.attendanceRecord.create({
-            data: this.toMockRecordCreateInput(eventId, document.id, row),
-            include: getAttendanceRecordInclude(),
-          }),
-        ),
-      );
-
-      return {
-        document,
-        records,
-      };
+    const documentInput = {
+      eventId,
+      fileName: `${template.name} mock attendance sheet`,
+      fileType: "mock/table",
+      fileUrl: "mock://table-style-attendance-sheet",
+    };
+    const extraction = await this.ocrProvider.extract({
+      document: documentInput,
+      template,
+      options: { rowCount: dto.rowCount },
     });
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const document = await tx.attendanceDocument.create({
+          data: {
+            eventId: documentInput.eventId,
+            fileName: documentInput.fileName,
+            fileType: documentInput.fileType,
+            fileUrl: documentInput.fileUrl,
+            status: AttendanceDocumentStatus.EXTRACTED,
+            rawOcrJson: extraction.rawOcrJson,
+          },
+        });
+
+        const records = [];
+
+        for (const row of extraction.rows) {
+          records.push(
+            await tx.attendanceRecord.create({
+              data: this.toExtractedRecordCreateInput(eventId, document.id, row),
+              include: getAttendanceRecordInclude(),
+            }),
+          );
+        }
+
+        return {
+          document,
+          records,
+        };
+      },
+      EXTRACTION_TRANSACTION_OPTIONS,
+    );
 
     return {
       document: {
@@ -122,53 +144,66 @@ export class RecordsService {
     }
 
     const template = await this.getEventTemplate(document.eventId);
-    const rowCount = dto.rowCount ?? 4;
-    const mockRows = buildMockRows(template.fields, rowCount);
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const updatedDocument = await tx.attendanceDocument.update({
-        where: { id: documentId },
-        data: {
-          status: AttendanceDocumentStatus.EXTRACTED,
-          rawOcrJson: {
-            source: "mock",
-            mode: "table",
-            fileName: document.fileName,
-            rows: mockRows.map((row) => row.data),
-          },
-        },
-        include: {
-          _count: {
-            select: { records: true },
-          },
-        },
-      });
-
-      const records = await Promise.all(
-        mockRows.map((row) =>
-          tx.attendanceRecord.create({
-            data: this.toMockRecordCreateInput(
-              document.eventId,
-              document.id,
-              row,
-            ),
-            include: getAttendanceRecordInclude(),
-          }),
-        ),
-      );
-
-      const documentWithCount = {
-        ...updatedDocument,
-        _count: {
-          records: updatedDocument._count.records + records.length,
-        },
-      };
-
-      return {
-        document: documentWithCount,
-        records,
-      };
+    const extraction = await this.ocrProvider.extract({
+      document: {
+        id: document.id,
+        eventId: document.eventId,
+        fileName: document.fileName,
+        fileType: document.fileType,
+        fileUrl: document.fileUrl,
+      },
+      template,
+      options: { rowCount: dto.rowCount },
     });
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        await tx.attendanceRecord.deleteMany({
+          where: { documentId },
+        });
+
+        const updatedDocument = await tx.attendanceDocument.update({
+          where: { id: documentId },
+          data: {
+            status: AttendanceDocumentStatus.EXTRACTED,
+            rawOcrJson: extraction.rawOcrJson,
+          },
+          include: {
+            _count: {
+              select: { records: true },
+            },
+          },
+        });
+
+        const records = [];
+
+        for (const row of extraction.rows) {
+          records.push(
+            await tx.attendanceRecord.create({
+              data: this.toExtractedRecordCreateInput(
+                document.eventId,
+                document.id,
+                row,
+              ),
+              include: getAttendanceRecordInclude(),
+            }),
+          );
+        }
+
+        const documentWithCount = {
+          ...updatedDocument,
+          _count: {
+            records: records.length,
+          },
+        };
+
+        return {
+          document: documentWithCount,
+          records,
+        };
+      },
+      EXTRACTION_TRANSACTION_OPTIONS,
+    );
 
     return {
       document: toAttendanceDocumentResponse(result.document),
@@ -332,10 +367,10 @@ export class RecordsService {
     };
   }
 
-  private toMockRecordCreateInput(
+  private toExtractedRecordCreateInput(
     eventId: string,
     documentId: string,
-    row: MockRow,
+    row: OcrExtractedRow,
   ): Prisma.AttendanceRecordCreateInput {
     return {
       event: { connect: { id: eventId } },
@@ -353,6 +388,7 @@ export class RecordsService {
           rawValue: this.stringifyValue(value.rawValue),
           normalizedValue: this.stringifyValue(value.normalizedValue),
           confidence: value.confidence,
+          boundingBox: value.boundingBox ?? undefined,
         })),
       },
     };
