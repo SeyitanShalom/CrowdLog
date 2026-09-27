@@ -6,6 +6,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "dev": "node --watch dist/main.js",
+    "test:ocr": "npm run build && node --test test/ocr-value-normalization.test.cjs",
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
     "db:format": "prisma format",

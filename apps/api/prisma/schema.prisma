@@ -39,32 +39,71 @@ enum AttendanceRecordStatus {
   @@map("attendance_record_status")
 }
 
+enum EventMemberRole {
+  OWNER    @map("owner")
+  REVIEWER @map("reviewer")
+
+  @@map("event_member_role")
+}
+
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  events    Event[]
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String?
+  events           Event[]
+  sessions         UserSession[]
+  eventMemberships EventMembership[]
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
 
   @@map("users")
 }
 
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
 model Event {
-  id          String               @id @default(cuid())
+  id          String            @id @default(cuid())
   title       String
   description String?
-  eventDate   DateTime?            @map("event_date")
-  ownerId     String?              @map("owner_id")
-  owner       User?                @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  eventDate   DateTime?         @map("event_date")
+  ownerId     String?           @map("owner_id")
+  owner       User?             @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  members     EventMembership[]
   templates   AttendanceTemplate[]
   documents   AttendanceDocument[]
   records     AttendanceRecord[]
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
 
   @@index([ownerId])
   @@map("events")
+}
+
+model EventMembership {
+  id        String          @id @default(cuid())
+  eventId   String          @map("event_id")
+  event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId    String          @map("user_id")
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      EventMemberRole @default(REVIEWER)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  @@unique([eventId, userId])
+  @@index([userId])
+  @@map("event_memberships")
 }
 
 model AttendanceTemplate {
@@ -146,6 +185,7 @@ model AttendanceRecordValue {
   rawValue        String?          @map("raw_value")
   normalizedValue String?          @map("normalized_value")
   confidence      Float?
+  validationIssues Json            @default("[]") @map("validation_issues")
   boundingBox     Json?            @map("bounding_box")
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")

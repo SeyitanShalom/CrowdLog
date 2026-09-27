@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
+import { AuthGuard } from "../auth/auth.guard";
+import { CurrentUser } from "../auth/current-user.decorator";
+import type { AuthenticatedUser } from "../auth/auth.types";
+import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { CreateTemplateDto } from "./dto/create-template.dto";
 import { TemplateFieldInputDto } from "./dto/template-field-input.dto";
@@ -14,33 +26,72 @@ export class EventsController {
   }
 
   @Get("events")
-  listEvents() {
-    return this.eventsService.listEvents();
+  @UseGuards(AuthGuard)
+  listEvents(@CurrentUser() user: AuthenticatedUser) {
+    return this.eventsService.listEvents(user.id);
   }
 
   @Post("events")
-  createEvent(@Body() dto: CreateEventDto) {
-    return this.eventsService.createEvent(dto);
+  @UseGuards(AuthGuard)
+  createEvent(@Body() dto: CreateEventDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.eventsService.createEvent(dto, user.id);
   }
 
   @Get("events/:eventId")
-  getEvent(@Param("eventId") eventId: string) {
-    return this.eventsService.getEvent(eventId);
+  @UseGuards(AuthGuard)
+  getEvent(
+    @Param("eventId") eventId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.eventsService.getEvent(eventId, user.id);
+  }
+
+  @Delete("events/:eventId")
+  @UseGuards(AuthGuard)
+  deleteEvent(
+    @Param("eventId") eventId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.eventsService.deleteEvent(eventId, user.id);
+  }
+
+  @Post("events/:eventId/members")
+  @UseGuards(AuthGuard)
+  addReviewer(
+    @Param("eventId") eventId: string,
+    @Body() dto: AddEventReviewerDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.eventsService.addReviewer(eventId, dto, user.id);
+  }
+
+  @Delete("events/:eventId/members/:memberId")
+  @UseGuards(AuthGuard)
+  removeMember(
+    @Param("eventId") eventId: string,
+    @Param("memberId") memberId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.eventsService.removeMember(eventId, memberId, user.id);
   }
 
   @Post("events/:eventId/templates")
+  @UseGuards(AuthGuard)
   createTemplate(
     @Param("eventId") eventId: string,
     @Body() dto: CreateTemplateDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.eventsService.createTemplate(eventId, dto);
+    return this.eventsService.createTemplate(eventId, dto, user.id);
   }
 
   @Post("templates/:templateId/fields")
+  @UseGuards(AuthGuard)
   createTemplateField(
     @Param("templateId") templateId: string,
     @Body() dto: TemplateFieldInputDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.eventsService.createTemplateField(templateId, dto);
+    return this.eventsService.createTemplateField(templateId, dto, user.id);
   }
 }

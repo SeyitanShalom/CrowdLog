@@ -32,20 +32,35 @@ The current app lets a user:
 - define custom attendance fields
 - choose field types like text, email, phone, number, signature, date, and select
 - mark fields as required
-- add aliases for future OCR mapping
+- add aliases for OCR mapping
 - preview the template payload
 - save event templates through the NestJS API and Prisma
+- sign in and sign out with a local email-based session
 - load saved events from the database
+- delete saved events
+- scope events, uploads, extraction, and review records to the signed-in user
+- create owner memberships for new events
+- expose owner/reviewer event memberships in API responses and the review UI
+- let event owners add reviewers by email and remove reviewer memberships
+- show role-aware saved events and owner-only event/team/template actions
 - run a mock table extraction for a saved event
 - upload PDF or image attendance sheets into local file storage
 - list uploaded documents for an event
-- run mock extraction against a selected uploaded document
-- route extraction through an OCR provider boundary with mock OCR as the first provider
+- run local Windows OCR extraction against a selected uploaded image document
+- suggest missing template fields from OCR-detected sheet columns
+- route extraction through an OCR provider boundary with mock OCR as the fallback provider
+- map OCR columns with template labels, field keys, saved aliases, and common header variants
+- clean and validate extracted values by field type before review
+- lower cell and row confidence when OCR values look invalid or incomplete
+- show OCR validation issue text in the review table
+- run focused OCR normalization tests
+- clean common low-resolution OCR glyph mistakes in headers and values
+- use adaptive Windows OCR row grouping and center-based column matching
 - review extracted records in an editable table
-- save, approve, or reject extracted rows
+- save, approve, or reject extracted rows as an event member
 
-There is no real OCR, authentication, export, search/filter system, or role
-system yet.
+There is no cloud OCR, external auth provider, external invitation email flow,
+export, search/filter system, or full role-management screen yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -70,7 +85,7 @@ language as the frontend.
 - ORM: Prisma
 - Styling: Tailwind CSS
 - Storage: local file storage first, cloud storage later
-- OCR: mock OCR first, real provider later
+- OCR: local Windows OCR for image uploads, mock OCR fallback, cloud OCR later
 
 ## Current Architecture
 
@@ -79,8 +94,8 @@ The backend is split into small NestJS modules:
 ```text
 apps/api/src/events/       # event, template, and template-field API
 apps/api/src/documents/    # local file upload and document listing
-apps/api/src/ocr/          # OCR provider interface and mock provider
-apps/api/src/records/      # mock extraction, review rows, approve/reject
+apps/api/src/ocr/          # OCR provider interface, provider selection, mock and Windows OCR
+apps/api/src/records/      # extraction persistence, review rows, approve/reject
 apps/api/src/prisma/       # Prisma client service/module
 ```
 
@@ -111,18 +126,28 @@ packages/shared/src/template-utils.ts
 6. Build the review screen for correcting extracted records. Done.
 7. Add file upload. Done.
 8. Introduce an OCR provider boundary with mock OCR as the first provider. Done.
-9. Integrate a real OCR provider.
-10. Add authentication and roles.
-11. Add export, search, filters, and portfolio polish.
+9. Integrate a first real OCR provider. Done.
+10. Add OCR field suggestions. Done.
+11. Add OCR validation, alias mapping, and provider polish. Done for local OCR.
+12. Add authentication and roles. In progress:
+    local sessions, event ownership, protected routes, reviewer add/remove, and
+    role-aware review UI are done. Auth/session route tests remain.
+13. Add export, search, filters, and portfolio polish.
 
 ## API Routes Implemented
 
 ```text
 GET   /health
+GET   /auth/me
+POST  /auth/sign-in
+POST  /auth/sign-out
 
 GET   /events
 POST  /events
 GET   /events/:eventId
+DELETE /events/:eventId
+POST  /events/:eventId/members
+DELETE /events/:eventId/members/:memberId
 POST  /events/:eventId/templates
 POST  /templates/:templateId/fields
 
@@ -133,6 +158,7 @@ GET   /uploads/:fileName
 GET   /events/:eventId/records
 POST  /events/:eventId/records
 POST  /events/:eventId/mock-extract
+POST  /documents/:documentId/extract
 POST  /documents/:documentId/mock-extract
 PATCH /records/:recordId
 POST  /records/:recordId/approve
@@ -148,6 +174,8 @@ POST  /records/:recordId/reject
 - `attendance_documents`
 - `attendance_records`
 - `attendance_record_values`
+- `user_sessions`
+- `event_memberships`
 
 ## Development Note
 
@@ -195,6 +223,7 @@ npm run dev
 npm run lint
 npm run build
 npm run build:api
+npm run test:ocr
 npm run db:validate
 npm run db:format
 npm run db:generate
@@ -243,33 +272,59 @@ docker compose up -d postgres
 npm run db:migrate
 ```
 
+## OCR Providers
+
+The OCR provider boundary is now in place. Extraction runs through
+`OcrProvider`, while `RecordsService` still owns persistence, document status
+updates, and review-record creation.
+
+Provider selection is controlled by API environment variables:
+
+```env
+OCR_PROVIDER="auto"
+OCR_FALLBACK_TO_MOCK="true"
+```
+
+- `auto` uses local Windows OCR for uploaded image files on Windows, then falls
+  back to mock rows when local OCR is unavailable.
+- `mock` always generates mock rows.
+- `windows` requires local Windows OCR for uploaded image files.
+
+The Windows OCR provider maps recognized table text into fields that already
+exist on the event template. It now considers field keys, labels, saved aliases,
+and common attendance header variants, so headers like `Matric No` can map to a
+saved `matric_number` field.
+
+Windows OCR also cleans extracted cell text, validates values by field type, and
+lowers confidence for suspicious cells. It repairs common low-resolution glyph
+mistakes like `Matr1c N0`, `c0m`, `O8O`, and `R0dent`, and uses adaptive row
+grouping plus center-based column matching for noisier spreadsheet screenshots.
+The review workspace already highlights low-confidence values and now shows
+validation issue text, so invalid email, phone, number, date, select, signature,
+or required-field values can be routed toward human correction.
+
+When OCR detects a likely missing sheet column, the review workspace can suggest
+a new template field and re-extract the selected document after adding it.
+
 ## Next Phase
 
-The OCR provider boundary is now in place. Mock extraction runs through
-`OcrProvider` and `MockOcrProvider`, while `RecordsService` still owns
-persistence, document status updates, and review-record creation.
+Finish phase 12: authentication and roles.
 
-The next phase is to plug a real OCR provider behind that same boundary without
-rewriting the review workflow. Suggested implementation direction:
-
-1. Choose the first provider to try, such as AWS Textract, Google Document AI,
-   or Azure Document Intelligence.
-2. Add provider configuration through API environment variables.
-3. Implement a second provider class that returns the same extracted row shape
-   as `MockOcrProvider`.
-4. Add field mapping from OCR headers and aliases into template field keys.
-5. Preserve mock OCR as the local development fallback.
+1. Add auth/session tests around protected routes.
+2. Add role tests for owner-only event/team/template changes.
+3. Add reviewer workflow tests for document access and row review actions.
+4. Consider ownership transfer or role-change flows after the basic tests exist.
+5. Start phase 13 with export, search, filters, and portfolio polish.
 
 ## Still Left To Build
 
-- Real OCR provider integration.
-- Alias-based field mapping, such as `Matric No` -> `matric_number`.
-- Validation of extracted values by field type.
+- Cloud OCR provider integration.
 - Form-style attendance sheets.
 - Multi-page PDF handling.
 - Editing existing events/templates instead of only creating new ones.
 - Document delete/replace and uploaded file cleanup.
-- Authentication, users, event ownership, and roles.
+- External reviewer invitation emails and full role-management UI.
+- Auth/session tests around protected routes.
 - CSV/Excel export.
 - Search, filters, and reporting.
 - Automated tests.
@@ -303,6 +358,7 @@ Already done:
 - Prisma schema and first migration
 - Event/template/template-field API
 - Frontend event/template builder
+- Saved event deletion
 - Mock OCR extraction
 - Editable review table
 - Approve/reject record workflow
@@ -310,10 +366,24 @@ Already done:
 - Uploaded document preview
 - Mock extraction can run against an uploaded document
 - OCR provider boundary with mock OCR as the first provider
+- Local Windows OCR can extract uploaded image documents through the provider boundary
+- OCR can suggest missing uploaded sheet columns, such as `taxa`
+- Windows OCR can map columns using labels, keys, aliases, and common header variants
+- Windows OCR can clean and validate extracted values by field type and lower confidence for suspicious cells
+- Review cells show OCR validation issue text
+- Focused OCR normalization tests can run with `npm run test:ocr`
+- Windows OCR has low-resolution glyph cleanup and adaptive row/column grouping
+- Local email sign-in/sign-out uses HTTP-only sessions
+- Events, documents, extraction, and records are protected by owner/member access
+- New events create an owner membership for the signed-in user
+- Event responses include owner/reviewer memberships
+- Owners can add and remove reviewers from the review workspace
+- Owners manage reviewers, event deletion, templates, and suggested OCR fields
+- Reviewers can access the event workspace and review extracted rows
 
 Current next phase:
-Plug a real OCR provider into the existing OCR provider boundary.
-The goal is to make uploaded attendance sheets produce real extracted review rows while preserving the existing review workflow.
+Finish phase 12 with auth/session and role tests, then begin phase 13 export,
+search, filters, and portfolio polish.
 
-Please inspect the repo first, avoid reading .env secrets, then continue from the OCR provider boundary phase.
+Please inspect the repo first, avoid reading .env secrets, then continue from the authentication and roles phase.
 ```

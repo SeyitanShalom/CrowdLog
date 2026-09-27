@@ -5,6 +5,8 @@ import {
   Prisma,
   type TemplateField,
 } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import { basename, resolve } from "node:path";
 import {
   OCR_PROVIDER,
   type OcrExtractedRow,
@@ -36,7 +38,7 @@ type TemplateWithFields = {
 
 const EXTRACTION_TRANSACTION_OPTIONS = {
   maxWait: 10000,
-  timeout: 20000,
+  timeout: 60000,
 };
 
 @Injectable()
@@ -46,8 +48,8 @@ export class RecordsService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async listRecords(eventId: string) {
-    await this.getEventTemplate(eventId);
+  async listRecords(eventId: string, userId: string) {
+    await this.getEventTemplate(eventId, userId);
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { eventId },
@@ -58,8 +60,12 @@ export class RecordsService {
     return records.map(toAttendanceRecordResponse);
   }
 
-  async createRecords(eventId: string, dto: CreateAttendanceRecordsDto) {
-    const template = await this.getEventTemplate(eventId);
+  async createRecords(
+    eventId: string,
+    dto: CreateAttendanceRecordsDto,
+    userId: string,
+  ) {
+    const template = await this.getEventTemplate(eventId, userId);
 
     const records = await this.prisma.$transaction(
       dto.records.map((record, index) =>
@@ -73,8 +79,8 @@ export class RecordsService {
     return records.map(toAttendanceRecordResponse);
   }
 
-  async mockExtract(eventId: string, dto: MockExtractDto) {
-    const template = await this.getEventTemplate(eventId);
+  async mockExtract(eventId: string, dto: MockExtractDto, userId: string) {
+    const template = await this.getEventTemplate(eventId, userId);
     const documentInput = {
       eventId,
       fileName: `${template.name} mock attendance sheet`,
@@ -100,16 +106,12 @@ export class RecordsService {
           },
         });
 
-        const records = [];
-
-        for (const row of extraction.rows) {
-          records.push(
-            await tx.attendanceRecord.create({
-              data: this.toExtractedRecordCreateInput(eventId, document.id, row),
-              include: getAttendanceRecordInclude(),
-            }),
-          );
-        }
+        const records = await this.createExtractedRows(
+          tx,
+          eventId,
+          document.id,
+          extraction.rows,
+        );
 
         return {
           document,
@@ -131,19 +133,35 @@ export class RecordsService {
         updatedAt: result.document.updatedAt.toISOString(),
       },
       records: result.records.map(toAttendanceRecordResponse),
+      suggestedFields: extraction.suggestedFields,
     };
   }
 
-  async mockExtractDocument(documentId: string, dto: MockExtractDto) {
+  async mockExtractDocument(
+    documentId: string,
+    dto: MockExtractDto,
+    userId: string,
+  ) {
+    return this.extractDocument(documentId, dto, userId);
+  }
+
+  async extractDocument(documentId: string, dto: MockExtractDto, userId: string) {
     const document = await this.prisma.attendanceDocument.findUnique({
       where: { id: documentId },
+      include: {
+        event: {
+          include: { members: true },
+        },
+      },
     });
 
     if (!document) {
       throw new NotFoundException("Attendance document not found.");
     }
 
-    const template = await this.getEventTemplate(document.eventId);
+    this.ensureCanAccessEvent(document.event, userId);
+
+    const template = await this.getEventTemplate(document.eventId, userId);
     const extraction = await this.ocrProvider.extract({
       document: {
         id: document.id,
@@ -151,6 +169,7 @@ export class RecordsService {
         fileName: document.fileName,
         fileType: document.fileType,
         fileUrl: document.fileUrl,
+        filePath: this.toUploadedFilePath(document.fileUrl),
       },
       template,
       options: { rowCount: dto.rowCount },
@@ -175,20 +194,12 @@ export class RecordsService {
           },
         });
 
-        const records = [];
-
-        for (const row of extraction.rows) {
-          records.push(
-            await tx.attendanceRecord.create({
-              data: this.toExtractedRecordCreateInput(
-                document.eventId,
-                document.id,
-                row,
-              ),
-              include: getAttendanceRecordInclude(),
-            }),
-          );
-        }
+        const records = await this.createExtractedRows(
+          tx,
+          document.eventId,
+          document.id,
+          extraction.rows,
+        );
 
         const documentWithCount = {
           ...updatedDocument,
@@ -208,19 +219,31 @@ export class RecordsService {
     return {
       document: toAttendanceDocumentResponse(result.document),
       records: result.records.map(toAttendanceRecordResponse),
+      suggestedFields: extraction.suggestedFields,
     };
   }
 
-  async updateRecord(recordId: string, dto: UpdateAttendanceRecordDto) {
+  async updateRecord(
+    recordId: string,
+    dto: UpdateAttendanceRecordDto,
+    userId: string,
+  ) {
     const existingRecord = await this.prisma.attendanceRecord.findUnique({
       where: { id: recordId },
+      include: {
+        event: {
+          include: { members: true },
+        },
+      },
     });
 
     if (!existingRecord) {
       throw new NotFoundException("Attendance record not found.");
     }
 
-    const template = await this.getEventTemplate(existingRecord.eventId);
+    this.ensureCanAccessEvent(existingRecord.event, userId);
+
+    const template = await this.getEventTemplate(existingRecord.eventId, userId);
     const data = dto.data
       ? this.cleanDataForFields(dto.data, template.fields)
       : undefined;
@@ -255,6 +278,7 @@ export class RecordsService {
               rawValue: this.stringifyValue(value),
               normalizedValue: this.stringifyValue(value),
               confidence: 1,
+              validationIssues: [],
             },
             create: {
               recordId,
@@ -262,6 +286,7 @@ export class RecordsService {
               rawValue: this.stringifyValue(value),
               normalizedValue: this.stringifyValue(value),
               confidence: 1,
+              validationIssues: [],
             },
           });
         }),
@@ -276,35 +301,51 @@ export class RecordsService {
     return toAttendanceRecordResponse(updatedRecord);
   }
 
-  async approveRecord(recordId: string) {
-    return this.updateStatus(recordId, AttendanceRecordStatus.APPROVED);
+  async approveRecord(recordId: string, userId: string) {
+    return this.updateStatus(recordId, AttendanceRecordStatus.APPROVED, userId);
   }
 
-  async rejectRecord(recordId: string) {
-    return this.updateStatus(recordId, AttendanceRecordStatus.REJECTED);
+  async rejectRecord(recordId: string, userId: string) {
+    return this.updateStatus(recordId, AttendanceRecordStatus.REJECTED, userId);
   }
 
   private async updateStatus(
     recordId: string,
     status: AttendanceRecordStatus,
+    userId: string,
   ) {
-    const record = await this.prisma.attendanceRecord
-      .update({
-        where: { id: recordId },
-        data: { status },
-        include: getAttendanceRecordInclude(),
-      })
-      .catch(() => {
-        throw new NotFoundException("Attendance record not found.");
-      });
+    const existingRecord = await this.prisma.attendanceRecord.findUnique({
+      where: { id: recordId },
+      include: {
+        event: {
+          include: { members: true },
+        },
+      },
+    });
+
+    if (!existingRecord) {
+      throw new NotFoundException("Attendance record not found.");
+    }
+
+    this.ensureCanAccessEvent(existingRecord.event, userId);
+
+    const record = await this.prisma.attendanceRecord.update({
+      where: { id: recordId },
+      data: { status },
+      include: getAttendanceRecordInclude(),
+    });
 
     return toAttendanceRecordResponse(record);
   }
 
-  private async getEventTemplate(eventId: string): Promise<TemplateWithFields> {
+  private async getEventTemplate(
+    eventId: string,
+    userId: string,
+  ): Promise<TemplateWithFields> {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
+        members: true,
         templates: {
           orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
           include: {
@@ -320,6 +361,8 @@ export class RecordsService {
       throw new NotFoundException("Event not found.");
     }
 
+    this.ensureCanAccessEvent(event, userId);
+
     const template = event.templates[0];
 
     if (!template) {
@@ -331,6 +374,20 @@ export class RecordsService {
       name: template.name,
       fields: template.fields,
     };
+  }
+
+  private ensureCanAccessEvent(
+    event: { ownerId: string | null; members: Array<{ userId: string }> },
+    userId: string,
+  ) {
+    if (
+      event.ownerId === userId ||
+      event.members.some((member) => member.userId === userId)
+    ) {
+      return;
+    }
+
+    throw new NotFoundException("Event not found.");
   }
 
   private toRecordCreateInput(
@@ -361,20 +418,67 @@ export class RecordsService {
             rawValue: this.stringifyValue(value),
             normalizedValue: this.stringifyValue(value),
             confidence: confidenceScore,
+            validationIssues: [],
           };
         }),
       },
     };
   }
 
-  private toExtractedRecordCreateInput(
+  private async createExtractedRows(
+    tx: Prisma.TransactionClient,
     eventId: string,
     documentId: string,
+    rows: OcrExtractedRow[],
+  ) {
+    const recordRows = rows.map((row) => ({
+      id: randomUUID(),
+      eventId,
+      documentId,
+      row,
+    }));
+
+    await tx.attendanceRecord.createMany({
+      data: recordRows.map(({ id, row }) =>
+        this.toExtractedRecordCreateManyInput(eventId, documentId, id, row),
+      ),
+    });
+
+    await tx.attendanceRecordValue.createMany({
+      data: recordRows.flatMap(({ id, row }) =>
+        row.values.map((value) => ({
+          recordId: id,
+          fieldId: value.field.id,
+          rawValue: this.stringifyValue(value.rawValue),
+          normalizedValue: this.stringifyValue(value.normalizedValue),
+          confidence: value.confidence,
+          validationIssues: value.issues ?? [],
+          boundingBox: value.boundingBox ?? undefined,
+        })),
+      ),
+    });
+
+    return tx.attendanceRecord.findMany({
+      where: {
+        id: {
+          in: recordRows.map((record) => record.id),
+        },
+      },
+      orderBy: { rowNumber: "asc" },
+      include: getAttendanceRecordInclude(),
+    });
+  }
+
+  private toExtractedRecordCreateManyInput(
+    eventId: string,
+    documentId: string,
+    recordId: string,
     row: OcrExtractedRow,
-  ): Prisma.AttendanceRecordCreateInput {
+  ): Prisma.AttendanceRecordCreateManyInput {
     return {
-      event: { connect: { id: eventId } },
-      document: { connect: { id: documentId } },
+      id: recordId,
+      eventId,
+      documentId,
       rowNumber: row.rowNumber,
       dataJson: this.toJsonObject(row.data),
       confidenceScore: row.confidenceScore,
@@ -382,15 +486,6 @@ export class RecordsService {
         row.confidenceScore < 0.75
           ? AttendanceRecordStatus.NEEDS_REVIEW
           : AttendanceRecordStatus.DRAFT,
-      values: {
-        create: row.values.map((value) => ({
-          field: { connect: { id: value.field.id } },
-          rawValue: this.stringifyValue(value.rawValue),
-          normalizedValue: this.stringifyValue(value.normalizedValue),
-          confidence: value.confidence,
-          boundingBox: value.boundingBox ?? undefined,
-        })),
-      },
     };
   }
 
@@ -430,5 +525,19 @@ export class RecordsService {
     }
 
     return String(value);
+  }
+
+  private toUploadedFilePath(fileUrl: string) {
+    if (!fileUrl.startsWith("/uploads/")) {
+      return undefined;
+    }
+
+    const fileName = fileUrl.replace("/uploads/", "");
+
+    if (fileName !== basename(fileName)) {
+      return undefined;
+    }
+
+    return resolve(process.cwd(), "uploads", fileName);
   }
 }

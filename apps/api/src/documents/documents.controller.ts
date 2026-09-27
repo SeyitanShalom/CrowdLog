@@ -4,9 +4,13 @@ import {
   Param,
   Post,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
+import { AuthGuard } from "../auth/auth.guard";
+import { CurrentUser } from "../auth/current-user.decorator";
+import type { AuthenticatedUser } from "../auth/auth.types";
 import { DocumentsService } from "./documents.service";
 import type { UploadedAttendanceFile } from "./local-upload.types";
 
@@ -22,11 +26,16 @@ export class DocumentsController {
   constructor(private readonly documentsService: DocumentsService) {}
 
   @Get("events/:eventId/documents")
-  listDocuments(@Param("eventId") eventId: string) {
-    return this.documentsService.listDocuments(eventId);
+  @UseGuards(AuthGuard)
+  listDocuments(
+    @Param("eventId") eventId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.listDocuments(eventId, user.id);
   }
 
   @Post("events/:eventId/documents")
+  @UseGuards(AuthGuard)
   @UseInterceptors(
     FileInterceptor("file", {
       limits: {
@@ -49,12 +58,17 @@ export class DocumentsController {
   uploadDocument(
     @Param("eventId") eventId: string,
     @UploadedFile() file: UploadedAttendanceFile | undefined,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.documentsService.createDocumentFromUpload(eventId, file);
+    return this.documentsService.createDocumentFromUpload(eventId, file, user.id);
   }
 
   @Get("uploads/:fileName")
-  getUploadedFile(@Param("fileName") fileName: string) {
-    return this.documentsService.getUploadedFile(fileName);
+  @UseGuards(AuthGuard)
+  getUploadedFile(
+    @Param("fileName") fileName: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.getUploadedFile(fileName, user.id);
   }
 }

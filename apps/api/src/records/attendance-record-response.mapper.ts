@@ -50,6 +50,7 @@ export function toAttendanceRecordResponse(record: AttendanceRecordWithValues) {
       rawValue: value.rawValue,
       normalizedValue: value.normalizedValue,
       confidence: value.confidence,
+      validationIssues: jsonStringArray(value.validationIssues),
       boundingBox: value.boundingBox,
       createdAt: value.createdAt.toISOString(),
       updatedAt: value.updatedAt.toISOString(),
@@ -78,4 +79,12 @@ function jsonRecord(value: Prisma.JsonValue) {
   }
 
   return result;
+}
+
+function jsonStringArray(value: Prisma.JsonValue) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
 }

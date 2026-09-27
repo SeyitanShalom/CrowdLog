@@ -9,24 +9,35 @@ import {
   splitCommaList,
   type AttendanceDocumentSummary,
   type AttendanceRecord,
+  type AuthUser,
   type CrowdLogEvent,
   type DraftField,
+  type EventMember,
+  type EventMemberRole,
   type EventDraft,
   type FieldType,
+  type OcrFieldSuggestion,
   type RecordCellValue,
   type RecordStatus,
   type TemplateField,
 } from "@crowdlog/shared";
 import {
+  addEventReviewer,
   approveAttendanceRecord,
   createEvent,
+  createTemplateField,
+  deleteEvent,
+  extractDocument,
   getApiFileUrl,
+  getCurrentSession,
   listDocuments,
   listEvents,
   listRecords,
-  mockExtractDocument,
   mockExtractRecords,
   rejectAttendanceRecord,
+  removeEventMember,
+  signIn as apiSignIn,
+  signOut as apiSignOut,
   updateAttendanceRecord,
   uploadAttendanceDocument,
   type CreateEventPayload,
@@ -47,6 +58,11 @@ const RECORD_STATUS_LABELS: Record<RecordStatus, string> = {
   needs_review: "Needs review",
   approved: "Approved",
   rejected: "Rejected",
+};
+
+const EVENT_ROLE_LABELS: Record<EventMemberRole, string> = {
+  owner: "Owner",
+  reviewer: "Reviewer",
 };
 
 const starterDraft: EventDraft = {
@@ -161,6 +177,42 @@ function eventToDraft(event: CrowdLogEvent): EventDraft {
   };
 }
 
+function addFieldToEvent(
+  event: CrowdLogEvent,
+  field: TemplateField,
+): CrowdLogEvent {
+  return {
+    ...event,
+    template: {
+      ...event.template,
+      fields: [...event.template.fields, field].sort(
+        (left, right) => left.sortOrder - right.sortOrder,
+      ),
+    },
+  };
+}
+
+function eventRoleForUser(
+  event: CrowdLogEvent | null,
+  user: AuthUser | null,
+): EventMemberRole | null {
+  if (!event || !user) {
+    return null;
+  }
+
+  if (event.ownerId === user.id) {
+    return "owner";
+  }
+
+  return (
+    event.members.find((member) => member.userId === user.id)?.role ?? null
+  );
+}
+
+function canManageEvent(event: CrowdLogEvent | null, user: AuthUser | null) {
+  return eventRoleForUser(event, user) === "owner";
+}
+
 function valueToString(value: RecordCellValue | undefined) {
   if (value === null || value === undefined) {
     return "";
@@ -188,6 +240,10 @@ type StatusMessage = {
 
 export function TemplateBuilder() {
   const [draft, setDraft] = useState<EventDraft>(starterDraft);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authDraft, setAuthDraft] = useState({ email: "", name: "" });
+  const [isLoadingSession, setIsLoadingSession] = useState(true);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [savedEvents, setSavedEvents] = useState<CrowdLogEvent[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -201,33 +257,65 @@ export function TemplateBuilder() {
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
   const [isMockExtracting, setIsMockExtracting] = useState(false);
   const [busyRecordIds, setBusyRecordIds] = useState<string[]>([]);
+  const [deletingEventIds, setDeletingEventIds] = useState<string[]>([]);
+  const [memberDraft, setMemberDraft] = useState({ email: "", name: "" });
+  const [isAddingReviewer, setIsAddingReviewer] = useState(false);
+  const [removingMemberIds, setRemovingMemberIds] = useState<string[]>([]);
+  const [fieldSuggestions, setFieldSuggestions] = useState<OcrFieldSuggestion[]>(
+    [],
+  );
+  const [addingFieldKeys, setAddingFieldKeys] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState<StatusMessage>(null);
 
   useEffect(() => {
     let shouldIgnore = false;
 
-    async function loadEvents() {
+    async function loadSession() {
       try {
+        const session = await getCurrentSession();
+
+        if (!shouldIgnore) {
+          setCurrentUser(session.user);
+          setAuthDraft((currentDraft) => ({
+            ...currentDraft,
+            email: session.user?.email ?? currentDraft.email,
+            name: session.user?.name ?? currentDraft.name,
+          }));
+        }
+
+        if (!session.user) {
+          if (!shouldIgnore) {
+            setSavedEvents([]);
+            setStatus({
+              tone: "info",
+              text: "Sign in to load your events.",
+            });
+          }
+          return;
+        }
+
         const events = await listEvents();
 
         if (!shouldIgnore) {
           setSavedEvents(events);
+          setStatus(null);
         }
       } catch {
         if (!shouldIgnore) {
           setStatus({
             tone: "error",
-            text: "Could not load saved events from the API.",
+            text: "Could not load your session from the API.",
           });
         }
       } finally {
         if (!shouldIgnore) {
+          setIsLoadingSession(false);
           setIsLoadingEvents(false);
         }
       }
     }
 
-    void loadEvents();
+    void loadSession();
 
     return () => {
       shouldIgnore = true;
@@ -268,6 +356,64 @@ export function TemplateBuilder() {
     type,
     count: templateFields.filter((field) => field.type === type).length,
   })).filter((entry) => entry.count > 0);
+  const canManageReviewEvent = canManageEvent(reviewEvent, currentUser);
+
+  async function signIn() {
+    const email = authDraft.email.trim();
+    const name = authDraft.name.trim();
+
+    if (!email) {
+      setStatus({ tone: "error", text: "Email is required to sign in." });
+      return;
+    }
+
+    setIsSigningIn(true);
+    setStatus({ tone: "info", text: "Signing in." });
+
+    try {
+      const session = await apiSignIn({
+        email,
+        name: name || undefined,
+      });
+      const events = await listEvents();
+
+      setCurrentUser(session.user);
+      setSavedEvents(events);
+      setStatus({ tone: "success", text: "Signed in." });
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        text: `Could not sign in. ${getErrorMessage(error)}`,
+      });
+    } finally {
+      setIsSigningIn(false);
+      setIsLoadingEvents(false);
+    }
+  }
+
+  async function signOut() {
+    setIsSigningIn(true);
+
+    try {
+      await apiSignOut();
+    } catch {
+      // Clearing local state is still the least surprising result for sign out.
+    } finally {
+      setCurrentUser(null);
+      setSavedEvents([]);
+      setReviewEvent(null);
+      setDocuments([]);
+      setSelectedDocumentId("");
+      setRecords([]);
+      setMemberDraft({ email: "", name: "" });
+      setRemovingMemberIds([]);
+      setFieldSuggestions([]);
+      setReviewStatus(null);
+      setStatus({ tone: "info", text: "Signed out." });
+      setIsLoadingEvents(false);
+      setIsSigningIn(false);
+    }
+  }
 
   function updateDraft<K extends keyof EventDraft>(
     key: K,
@@ -317,6 +463,18 @@ export function TemplateBuilder() {
     setStatus({ tone: "info", text: "Field added." });
   }
 
+  function replaceSavedEvent(nextEvent: CrowdLogEvent) {
+    setSavedEvents((currentEvents) =>
+      currentEvents.map((event) =>
+        event.id === nextEvent.id ? nextEvent : event,
+      ),
+    );
+
+    setReviewEvent((currentEvent) =>
+      currentEvent?.id === nextEvent.id ? nextEvent : currentEvent,
+    );
+  }
+
   function removeField(id: string) {
     setDraft((currentDraft) => ({
       ...currentDraft,
@@ -347,6 +505,11 @@ export function TemplateBuilder() {
   }
 
   async function saveEventTemplate() {
+    if (!currentUser) {
+      setStatus({ tone: "error", text: "Sign in before saving an event." });
+      return;
+    }
+
     const title = draft.title.trim();
     const templateName = draft.templateName.trim();
     const fields = templateFields;
@@ -392,9 +555,10 @@ export function TemplateBuilder() {
       setDocuments([]);
       setSelectedDocumentId("");
       setRecords([]);
+      setFieldSuggestions([]);
       setReviewStatus({
         tone: "info",
-        text: "Template ready for mock rows.",
+        text: "Template ready for extraction.",
       });
     } catch (error) {
       setStatus({
@@ -423,6 +587,7 @@ export function TemplateBuilder() {
     setReviewEvent(event);
     setIsLoadingRecords(true);
     setIsLoadingDocuments(true);
+    setFieldSuggestions([]);
     setReviewStatus({ tone: "info", text: "Loading documents and records." });
 
     try {
@@ -442,6 +607,7 @@ export function TemplateBuilder() {
       setDocuments([]);
       setSelectedDocumentId("");
       setRecords([]);
+      setFieldSuggestions([]);
       setReviewStatus({
         tone: "error",
         text: "Could not load documents and records for review.",
@@ -449,6 +615,122 @@ export function TemplateBuilder() {
     } finally {
       setIsLoadingRecords(false);
       setIsLoadingDocuments(false);
+    }
+  }
+
+  async function deleteSavedEvent(event: CrowdLogEvent) {
+    if (!canManageEvent(event, currentUser)) {
+      setStatus({ tone: "error", text: "Only event owners can delete events." });
+      return;
+    }
+
+    const shouldDelete = window.confirm(
+      `Delete "${event.title}" and its extracted records?`,
+    );
+
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeletingEventIds((currentIds) => [...currentIds, event.id]);
+
+    try {
+      await deleteEvent(event.id);
+      setSavedEvents((currentEvents) =>
+        currentEvents.filter((currentEvent) => currentEvent.id !== event.id),
+      );
+
+      if (reviewEvent?.id === event.id) {
+        setReviewEvent(null);
+        setDocuments([]);
+        setSelectedDocumentId("");
+        setRecords([]);
+        setFieldSuggestions([]);
+        setReviewStatus({ tone: "info", text: "Deleted event removed." });
+      }
+
+      setStatus({ tone: "success", text: "Saved event deleted." });
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        text: `Could not delete the event. ${getErrorMessage(error)}`,
+      });
+    } finally {
+      setDeletingEventIds((currentIds) =>
+        currentIds.filter((eventId) => eventId !== event.id),
+      );
+    }
+  }
+
+  async function addReviewer() {
+    if (!reviewEvent || !canManageReviewEvent) {
+      setReviewStatus({
+        tone: "error",
+        text: "Only event owners can add reviewers.",
+      });
+      return;
+    }
+
+    const email = memberDraft.email.trim();
+    const name = memberDraft.name.trim();
+
+    if (!email) {
+      setReviewStatus({ tone: "error", text: "Reviewer email is required." });
+      return;
+    }
+
+    setIsAddingReviewer(true);
+    setReviewStatus({ tone: "info", text: "Adding reviewer." });
+
+    try {
+      const nextEvent = await addEventReviewer(reviewEvent.id, {
+        email,
+        name: name || undefined,
+      });
+
+      replaceSavedEvent(nextEvent);
+      setMemberDraft({ email: "", name: "" });
+      setReviewStatus({ tone: "success", text: "Reviewer added." });
+    } catch (error) {
+      setReviewStatus({
+        tone: "error",
+        text: `Could not add reviewer. ${getErrorMessage(error)}`,
+      });
+    } finally {
+      setIsAddingReviewer(false);
+    }
+  }
+
+  async function removeReviewer(member: EventMember) {
+    if (!reviewEvent || !canManageReviewEvent) {
+      setReviewStatus({
+        tone: "error",
+        text: "Only event owners can remove reviewers.",
+      });
+      return;
+    }
+
+    const shouldRemove = window.confirm(`Remove ${member.email} from this event?`);
+
+    if (!shouldRemove) {
+      return;
+    }
+
+    setRemovingMemberIds((currentIds) => [...currentIds, member.id]);
+
+    try {
+      const nextEvent = await removeEventMember(reviewEvent.id, member.id);
+      replaceSavedEvent(nextEvent);
+      setReviewStatus({ tone: "success", text: "Reviewer removed." });
+    } catch (error) {
+      setReviewStatus({
+        tone: "error",
+        text: `Could not remove reviewer. ${getErrorMessage(error)}`,
+      });
+    } finally {
+      setRemovingMemberIds((currentIds) =>
+        currentIds.filter((memberId) => memberId !== member.id),
+      );
     }
   }
 
@@ -483,12 +765,18 @@ export function TemplateBuilder() {
     }
 
     setIsMockExtracting(true);
-    setReviewStatus({ tone: "info", text: "Generating mock rows." });
+    setReviewStatus({
+      tone: "info",
+      text: selectedDocumentId
+        ? "Extracting selected file."
+        : "Generating mock rows.",
+    });
 
     try {
       const result = selectedDocumentId
-        ? await mockExtractDocument(selectedDocumentId, 4)
+        ? await extractDocument(selectedDocumentId, 25)
         : await mockExtractRecords(reviewEvent.id, 4);
+      setFieldSuggestions(result.suggestedFields ?? []);
       setRecords((currentRecords) => [
         ...result.records,
         ...currentRecords.filter(
@@ -511,7 +799,9 @@ export function TemplateBuilder() {
       setSelectedDocumentId(result.document.id);
       setReviewStatus({
         tone: "success",
-        text: `Generated ${result.records.length} mock rows for review.`,
+        text: selectedDocumentId
+          ? `Extracted ${result.records.length} rows for review.`
+          : `Generated ${result.records.length} mock rows for review.`,
       });
     } catch (error) {
       setReviewStatus({
@@ -520,6 +810,82 @@ export function TemplateBuilder() {
       });
     } finally {
       setIsMockExtracting(false);
+    }
+  }
+
+  async function addSuggestedField(suggestion: OcrFieldSuggestion) {
+    if (!reviewEvent) {
+      return;
+    }
+
+    if (!canManageReviewEvent) {
+      setReviewStatus({
+        tone: "error",
+        text: "Only event owners can add suggested fields.",
+      });
+      return;
+    }
+
+    setAddingFieldKeys((currentKeys) => [...currentKeys, suggestion.key]);
+
+    try {
+      const field = await createTemplateField(reviewEvent.template.id, {
+        label: suggestion.label,
+        key: suggestion.key,
+        type: suggestion.type,
+        required: false,
+        sortOrder: reviewEvent.template.fields.length + 1,
+        aliases: suggestion.aliases,
+        options: suggestion.options,
+      });
+      const nextEvent = addFieldToEvent(reviewEvent, field);
+
+      setReviewEvent(nextEvent);
+      setSavedEvents((currentEvents) =>
+        currentEvents.map((event) =>
+          event.id === nextEvent.id ? nextEvent : event,
+        ),
+      );
+      setFieldSuggestions((currentSuggestions) =>
+        currentSuggestions.filter(
+          (currentSuggestion) => currentSuggestion.key !== suggestion.key,
+        ),
+      );
+
+      if (!selectedDocumentId) {
+        setReviewStatus({
+          tone: "success",
+          text: `${field.label} added to the template.`,
+        });
+        return;
+      }
+
+      const result = await extractDocument(selectedDocumentId, 25);
+      setRecords((currentRecords) => [
+        ...result.records,
+        ...currentRecords.filter(
+          (record) => record.documentId !== result.document.id,
+        ),
+      ]);
+      setDocuments((currentDocuments) =>
+        currentDocuments.map((document) =>
+          document.id === result.document.id ? result.document : document,
+        ),
+      );
+      setFieldSuggestions(result.suggestedFields ?? []);
+      setReviewStatus({
+        tone: "success",
+        text: `${field.label} added and the selected file was re-extracted.`,
+      });
+    } catch (error) {
+      setReviewStatus({
+        tone: "error",
+        text: `Could not add suggested field. ${getErrorMessage(error)}`,
+      });
+    } finally {
+      setAddingFieldKeys((currentKeys) =>
+        currentKeys.filter((key) => key !== suggestion.key),
+      );
     }
   }
 
@@ -541,6 +907,17 @@ export function TemplateBuilder() {
                 ...record.data,
                 [fieldKey]: value,
               },
+              values: record.values.map((recordValue) =>
+                recordValue.fieldKey === fieldKey
+                  ? {
+                      ...recordValue,
+                      rawValue: valueToString(value),
+                      normalizedValue: valueToString(value),
+                      confidence: 1,
+                      validationIssues: [],
+                    }
+                  : recordValue,
+              ),
             }
           : record,
       ),
@@ -621,16 +998,27 @@ export function TemplateBuilder() {
               Attendance sheets into clean records.
             </h1>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs font-medium text-[#36513f]">
-            <span className="rounded-md border border-[#cbd8c8] bg-[#edf3ea] px-3 py-1.5">
-              Milestone 1
-            </span>
-            <span className="rounded-md border border-[#d7d0bd] bg-[#f8f1dd] px-3 py-1.5">
-              Dynamic templates
-            </span>
-            <span className="rounded-md border border-[#c9d9dd] bg-[#e9f4f5] px-3 py-1.5">
-              OCR later
-            </span>
+          <div className="flex flex-col gap-3 lg:items-end">
+            <div className="flex flex-wrap gap-2 text-xs font-medium text-[#36513f]">
+              <span className="rounded-md border border-[#cbd8c8] bg-[#edf3ea] px-3 py-1.5">
+                Auth phase
+              </span>
+              <span className="rounded-md border border-[#d7d0bd] bg-[#f8f1dd] px-3 py-1.5">
+                Owner events
+              </span>
+              <span className="rounded-md border border-[#c9d9dd] bg-[#e9f4f5] px-3 py-1.5">
+                OCR review
+              </span>
+            </div>
+            <AuthPanel
+              currentUser={currentUser}
+              authDraft={authDraft}
+              isLoadingSession={isLoadingSession}
+              isSigningIn={isSigningIn}
+              onAuthDraftChange={setAuthDraft}
+              onSignIn={signIn}
+              onSignOut={signOut}
+            />
           </div>
         </div>
       </header>
@@ -869,12 +1257,12 @@ export function TemplateBuilder() {
                   >
                     Reset draft
                   </button>
-                  <button
-                    type="button"
-                    onClick={saveEventTemplate}
-                    disabled={isSaving}
-                    className="h-11 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-[#a8d3b7]"
-                  >
+                    <button
+                      type="button"
+                      onClick={saveEventTemplate}
+                    disabled={isSaving || !currentUser || isLoadingSession}
+                      className="h-11 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-[#a8d3b7]"
+                    >
                     {isSaving ? "Saving..." : "Save event template"}
                   </button>
                 </div>
@@ -884,6 +1272,8 @@ export function TemplateBuilder() {
 
           <ReviewWorkspace
             reviewEvent={reviewEvent}
+            currentUser={currentUser}
+            canManageEvent={canManageReviewEvent}
             documents={documents}
             selectedDocumentId={selectedDocumentId}
             records={records}
@@ -892,10 +1282,19 @@ export function TemplateBuilder() {
             isLoadingRecords={isLoadingRecords}
             isMockExtracting={isMockExtracting}
             busyRecordIds={busyRecordIds}
+            memberDraft={memberDraft}
+            isAddingReviewer={isAddingReviewer}
+            removingMemberIds={removingMemberIds}
+            fieldSuggestions={fieldSuggestions}
+            addingFieldKeys={addingFieldKeys}
             reviewStatus={reviewStatus}
+            onMemberDraftChange={setMemberDraft}
+            onAddReviewer={addReviewer}
+            onRemoveReviewer={removeReviewer}
             onSelectDocument={setSelectedDocumentId}
             onUploadDocument={uploadReviewDocument}
             onMockExtract={runMockExtraction}
+            onAddSuggestedField={addSuggestedField}
             onCellChange={updateRecordCell}
             onSave={saveRecord}
             onApprove={approveRecordRow}
@@ -955,36 +1354,59 @@ export function TemplateBuilder() {
                   No saved templates yet.
                 </p>
               ) : (
-                savedEvents.map((event) => (
-                  <div key={event.id} className="px-4 py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[#172017]">
-                          {event.title}
-                        </p>
-                        <p className="mt-1 text-xs text-[#667265]">
-                          {event.template.fields.length} fields
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => loadSavedEvent(event)}
-                          className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef]"
-                        >
-                          Load
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => selectReviewEvent(event)}
-                          className="h-9 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41]"
-                        >
-                          Review
-                        </button>
+                savedEvents.map((event) => {
+                  const isDeleting = deletingEventIds.includes(event.id);
+                  const eventRole = eventRoleForUser(event, currentUser);
+                  const isOwner = eventRole === "owner";
+
+                  return (
+                    <div key={event.id} className="px-4 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-[#172017]">
+                            {event.title}
+                          </p>
+                          <p className="mt-1 text-xs text-[#667265]">
+                            {event.template.fields.length} fields
+                          </p>
+                          {eventRole ? (
+                            <span className="mt-2 inline-flex rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1 text-xs font-semibold text-[#526052]">
+                              {EVENT_ROLE_LABELS[eventRole]}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => loadSavedEvent(event)}
+                            disabled={isDeleting}
+                            className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Load
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => selectReviewEvent(event)}
+                            disabled={isDeleting}
+                            className="h-9 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Review
+                          </button>
+                          {isOwner ? (
+                            <button
+                              type="button"
+                              onClick={() => deleteSavedEvent(event)}
+                              disabled={isDeleting}
+                              className="h-9 rounded-md border border-[#d9b7aa] px-3 text-sm font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isDeleting ? "Deleting" : "Delete"}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </section>
@@ -994,8 +1416,94 @@ export function TemplateBuilder() {
   );
 }
 
+function AuthPanel({
+  currentUser,
+  authDraft,
+  isLoadingSession,
+  isSigningIn,
+  onAuthDraftChange,
+  onSignIn,
+  onSignOut,
+}: {
+  currentUser: AuthUser | null;
+  authDraft: { email: string; name: string };
+  isLoadingSession: boolean;
+  isSigningIn: boolean;
+  onAuthDraftChange: (draft: { email: string; name: string }) => void;
+  onSignIn: () => void;
+  onSignOut: () => void;
+}) {
+  if (isLoadingSession) {
+    return (
+      <div className="text-sm font-medium text-[#667265]">
+        Checking session...
+      </div>
+    );
+  }
+
+  if (currentUser) {
+    return (
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="min-w-0 text-sm">
+          <span className="block truncate font-semibold text-[#172017]">
+            {currentUser.name || currentUser.email}
+          </span>
+          <span className="block truncate text-xs text-[#667265]">
+            {currentUser.email}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onSignOut}
+          disabled={isSigningIn}
+          className="h-9 rounded-md border border-[#cbd5c8] px-3 text-xs font-semibold text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Sign out
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className="grid gap-2 sm:grid-cols-[180px_160px_auto]"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSignIn();
+      }}
+    >
+      <input
+        type="email"
+        value={authDraft.email}
+        placeholder="Email"
+        onChange={(event) =>
+          onAuthDraftChange({ ...authDraft, email: event.target.value })
+        }
+        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+      />
+      <input
+        value={authDraft.name}
+        placeholder="Name"
+        onChange={(event) =>
+          onAuthDraftChange({ ...authDraft, name: event.target.value })
+        }
+        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+      />
+      <button
+        type="submit"
+        disabled={isSigningIn}
+        className="h-9 rounded-md bg-[#2f6f4e] px-3 text-xs font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {isSigningIn ? "Signing in" : "Sign in"}
+      </button>
+    </form>
+  );
+}
+
 type ReviewWorkspaceProps = {
   reviewEvent: CrowdLogEvent | null;
+  currentUser: AuthUser | null;
+  canManageEvent: boolean;
   documents: AttendanceDocumentSummary[];
   selectedDocumentId: string;
   records: AttendanceRecord[];
@@ -1004,10 +1512,19 @@ type ReviewWorkspaceProps = {
   isLoadingRecords: boolean;
   isMockExtracting: boolean;
   busyRecordIds: string[];
+  memberDraft: { email: string; name: string };
+  isAddingReviewer: boolean;
+  removingMemberIds: string[];
+  fieldSuggestions: OcrFieldSuggestion[];
+  addingFieldKeys: string[];
   reviewStatus: StatusMessage;
+  onMemberDraftChange: (draft: { email: string; name: string }) => void;
+  onAddReviewer: () => void;
+  onRemoveReviewer: (member: EventMember) => void;
   onSelectDocument: (documentId: string) => void;
   onUploadDocument: (file: File) => void;
   onMockExtract: () => void;
+  onAddSuggestedField: (suggestion: OcrFieldSuggestion) => void;
   onCellChange: (
     recordId: string,
     fieldKey: string,
@@ -1020,6 +1537,8 @@ type ReviewWorkspaceProps = {
 
 function ReviewWorkspace({
   reviewEvent,
+  currentUser,
+  canManageEvent,
   documents,
   selectedDocumentId,
   records,
@@ -1028,10 +1547,19 @@ function ReviewWorkspace({
   isLoadingRecords,
   isMockExtracting,
   busyRecordIds,
+  memberDraft,
+  isAddingReviewer,
+  removingMemberIds,
+  fieldSuggestions,
+  addingFieldKeys,
   reviewStatus,
+  onMemberDraftChange,
+  onAddReviewer,
+  onRemoveReviewer,
   onSelectDocument,
   onUploadDocument,
   onMockExtract,
+  onAddSuggestedField,
   onCellChange,
   onSave,
   onApprove,
@@ -1061,9 +1589,11 @@ function ReviewWorkspace({
           className="h-10 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isMockExtracting
-            ? "Generating..."
+            ? selectedDocument
+              ? "Extracting..."
+              : "Generating..."
             : selectedDocument
-              ? "Generate mock rows for file"
+              ? "Extract selected file"
               : "Generate mock rows"}
         </button>
       </div>
@@ -1078,6 +1608,17 @@ function ReviewWorkspace({
             disabled={!reviewEvent}
             onSelectDocument={onSelectDocument}
             onUploadDocument={onUploadDocument}
+          />
+          <EventMembersPanel
+            event={reviewEvent}
+            currentUser={currentUser}
+            canManageEvent={canManageEvent}
+            memberDraft={memberDraft}
+            isAddingReviewer={isAddingReviewer}
+            removingMemberIds={removingMemberIds}
+            onMemberDraftChange={onMemberDraftChange}
+            onAddReviewer={onAddReviewer}
+            onRemoveReviewer={onRemoveReviewer}
           />
           <MockDocumentPreview
             event={reviewEvent}
@@ -1115,6 +1656,49 @@ function ReviewWorkspace({
               ) : null}
             </div>
           </div>
+
+          {fieldSuggestions.length > 0 ? (
+            <div className="mb-3 rounded-lg border border-[#d9d0a8] bg-[#fffaf0] p-3">
+              <div className="mb-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#725b16]">
+                  Suggested fields
+                </p>
+              </div>
+              <div className="grid gap-2">
+                {fieldSuggestions.map((suggestion) => {
+                  const isAdding = addingFieldKeys.includes(suggestion.key);
+
+                  return (
+                    <div
+                      key={suggestion.key}
+                      className="flex flex-col gap-2 rounded-md border border-[#eadcae] bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#332a12]">
+                          {suggestion.label}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-[#725b16]">
+                          {suggestion.sampleValues.slice(0, 4).join(", ")}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onAddSuggestedField(suggestion)}
+                        disabled={isAdding || !canManageEvent}
+                        className="h-9 rounded-md border border-[#d2b15a] px-3 text-xs font-semibold text-[#725b16] transition hover:bg-[#fff3cf] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isAdding
+                          ? "Adding"
+                          : canManageEvent
+                            ? "Add field"
+                            : "Owner only"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           <div className="overflow-x-auto rounded-lg border border-[#dfe4dc]">
             <table className="min-w-full border-collapse bg-white text-sm">
@@ -1175,6 +1759,7 @@ function ReviewWorkspace({
                             value?.confidence !== null &&
                             value?.confidence !== undefined &&
                             value.confidence < 0.75;
+                          const validationIssues = value?.validationIssues ?? [];
 
                           return (
                             <td key={field.id} className="align-top px-3 py-3">
@@ -1183,6 +1768,7 @@ function ReviewWorkspace({
                                 value={record.data[field.key]}
                                 isLowConfidence={isLowConfidence}
                                 confidence={value?.confidence}
+                                validationIssues={validationIssues}
                                 disabled={isBusy}
                                 onChange={(nextValue) =>
                                   onCellChange(record.id, field.key, nextValue)
@@ -1327,6 +1913,141 @@ function DocumentUploadPanel({
   );
 }
 
+function EventMembersPanel({
+  event,
+  currentUser,
+  canManageEvent,
+  memberDraft,
+  isAddingReviewer,
+  removingMemberIds,
+  onMemberDraftChange,
+  onAddReviewer,
+  onRemoveReviewer,
+}: {
+  event: CrowdLogEvent | null;
+  currentUser: AuthUser | null;
+  canManageEvent: boolean;
+  memberDraft: { email: string; name: string };
+  isAddingReviewer: boolean;
+  removingMemberIds: string[];
+  onMemberDraftChange: (draft: { email: string; name: string }) => void;
+  onAddReviewer: () => void;
+  onRemoveReviewer: (member: EventMember) => void;
+}) {
+  const currentRole = eventRoleForUser(event, currentUser);
+  const members = event?.members ?? [];
+
+  return (
+    <div className="rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
+            Event team
+          </p>
+          <h3 className="mt-1 text-base font-semibold text-[#172017]">
+            Members
+          </h3>
+        </div>
+        {currentRole ? (
+          <span className="rounded-md border border-[#d8dfd2] bg-white px-2.5 py-1 text-xs font-semibold text-[#526052]">
+            {EVENT_ROLE_LABELS[currentRole]}
+          </span>
+        ) : null}
+      </div>
+
+      {canManageEvent ? (
+        <form
+          className="grid gap-2"
+          onSubmit={(submitEvent) => {
+            submitEvent.preventDefault();
+            onAddReviewer();
+          }}
+        >
+          <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
+            Reviewer email
+            <input
+              type="email"
+              value={memberDraft.email}
+              onChange={(inputEvent) =>
+                onMemberDraftChange({
+                  ...memberDraft,
+                  email: inputEvent.target.value,
+                })
+              }
+              className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+            />
+          </label>
+          <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
+            Reviewer name
+            <input
+              value={memberDraft.name}
+              onChange={(inputEvent) =>
+                onMemberDraftChange({
+                  ...memberDraft,
+                  name: inputEvent.target.value,
+                })
+              }
+              className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={isAddingReviewer || !memberDraft.email.trim()}
+            className="h-10 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isAddingReviewer ? "Adding reviewer" : "Add reviewer"}
+          </button>
+        </form>
+      ) : null}
+
+      <div className="mt-4 divide-y divide-[#e5e9e2] rounded-md border border-[#e5e9e2] bg-white">
+        {members.length === 0 ? (
+          <div className="px-3 py-3 text-sm text-[#667265]">
+            No event selected.
+          </div>
+        ) : (
+          members.map((member) => {
+            const isRemoving = removingMemberIds.includes(member.id);
+            const isCurrentUser = member.userId === currentUser?.id;
+
+            return (
+              <div
+                key={member.id}
+                className="flex items-center justify-between gap-3 px-3 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-[#172017]">
+                    {member.name || member.email}
+                    {isCurrentUser ? " (you)" : ""}
+                  </p>
+                  <p className="mt-1 truncate text-xs text-[#667265]">
+                    {member.email}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1 text-xs font-semibold text-[#526052]">
+                    {EVENT_ROLE_LABELS[member.role]}
+                  </span>
+                  {canManageEvent && member.role === "reviewer" ? (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveReviewer(member)}
+                      disabled={isRemoving}
+                      className="h-8 rounded-md border border-[#d9b7aa] px-2.5 text-xs font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isRemoving ? "Removing" : "Remove"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MockDocumentPreview({
   event,
   records,
@@ -1424,6 +2145,7 @@ function ReviewCell({
   value,
   isLowConfidence,
   confidence,
+  validationIssues,
   disabled,
   onChange,
 }: {
@@ -1431,11 +2153,14 @@ function ReviewCell({
   value: RecordCellValue | undefined;
   isLowConfidence: boolean;
   confidence: number | null | undefined;
+  validationIssues: string[];
   disabled: boolean;
   onChange: (value: RecordCellValue) => void;
 }) {
+  const hasValidationIssues = validationIssues.length > 0;
+  const needsAttention = isLowConfidence || hasValidationIssues;
   const inputClassName = `h-10 w-full rounded-md border px-3 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] ${
-    isLowConfidence
+    needsAttention
       ? "border-[#d9a443] bg-[#fff8e6] focus:border-[#b7831e] focus:ring-2 focus:ring-[#f4dda6]"
       : "border-[#cbd5c8] bg-white focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
   }`;
@@ -1445,7 +2170,7 @@ function ReviewCell({
       {field.type === "signature" ? (
         <label
           className={`flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium ${
-            isLowConfidence
+            needsAttention
               ? "border-[#d9a443] bg-[#fff8e6] text-[#6b561d]"
               : "border-[#cbd5c8] bg-white text-[#334033]"
           }`}
@@ -1486,6 +2211,11 @@ function ReviewCell({
       {isLowConfidence ? (
         <span className="text-xs font-semibold text-[#8a6516]">
           Low confidence: {confidenceLabel(confidence)}
+        </span>
+      ) : null}
+      {hasValidationIssues ? (
+        <span className="text-xs font-semibold text-[#8a6516]">
+          {validationIssues.join(" ")}
         </span>
       ) : null}
     </div>

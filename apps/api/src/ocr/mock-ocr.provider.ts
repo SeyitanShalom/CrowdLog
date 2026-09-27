@@ -204,6 +204,7 @@ export class MockOcrProvider implements OcrProvider {
         rows: rows.map((row) => row.data),
       } satisfies Prisma.InputJsonObject,
       rows,
+      suggestedFields: [],
     };
   }
 

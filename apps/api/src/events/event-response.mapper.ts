@@ -1,6 +1,18 @@
-import { TemplateFieldType, type Prisma } from "@prisma/client";
+import { EventMemberRole, TemplateFieldType, type Prisma } from "@prisma/client";
 
 const eventInclude = {
+  members: {
+    orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+        },
+      },
+    },
+  },
   templates: {
     orderBy: { createdAt: "asc" },
     include: {
@@ -28,6 +40,11 @@ const fieldTypeMap: Record<TemplateFieldType, string> = {
   SELECT: "select",
 };
 
+const eventMemberRoleMap: Record<EventMemberRole, string> = {
+  OWNER: "owner",
+  REVIEWER: "reviewer",
+};
+
 export function getEventInclude() {
   return eventInclude;
 }
@@ -39,11 +56,13 @@ export function toEventResponse(event: EventWithTemplates) {
 
   return {
     id: event.id,
+    ownerId: event.ownerId,
     title: event.title,
     description: event.description ?? "",
     eventDate: event.eventDate ? toDateInputValue(event.eventDate) : "",
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),
+    members: event.members.map(toEventMemberResponse),
     template: defaultTemplate
       ? toTemplateResponse(defaultTemplate)
       : {
@@ -55,6 +74,19 @@ export function toEventResponse(event: EventWithTemplates) {
           createdAt: event.createdAt.toISOString(),
           updatedAt: event.updatedAt.toISOString(),
         },
+  };
+}
+
+function toEventMemberResponse(member: EventWithTemplates["members"][number]) {
+  return {
+    id: member.id,
+    eventId: member.eventId,
+    userId: member.userId,
+    email: member.user.email,
+    name: member.user.name,
+    role: eventMemberRoleMap[member.role],
+    createdAt: member.createdAt.toISOString(),
+    updatedAt: member.updatedAt.toISOString(),
   };
 }
 

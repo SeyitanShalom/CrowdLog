@@ -31,14 +31,41 @@ export type AttendanceTemplate = {
   updatedAt: string;
 };
 
+export const EVENT_MEMBER_ROLES = ["owner", "reviewer"] as const;
+
+export type EventMemberRole = (typeof EVENT_MEMBER_ROLES)[number];
+
+export type EventMember = {
+  id: string;
+  eventId: string;
+  userId: string;
+  email: string;
+  name: string | null;
+  role: EventMemberRole;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CrowdLogEvent = {
   id: string;
+  ownerId?: string | null;
   title: string;
   description: string;
   eventDate: string;
   template: AttendanceTemplate;
+  members: EventMember[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  name: string | null;
+};
+
+export type AuthSession = {
+  user: AuthUser | null;
 };
 
 export const RECORD_STATUSES = [
@@ -75,6 +102,7 @@ export type AttendanceRecordValue = {
   rawValue: string | null;
   normalizedValue: string | null;
   confidence: number | null;
+  validationIssues: string[];
   boundingBox: unknown;
   createdAt: string;
   updatedAt: string;
@@ -94,9 +122,20 @@ export type AttendanceRecord = {
   updatedAt: string;
 };
 
+export type OcrFieldSuggestion = {
+  label: string;
+  key: string;
+  type: FieldType;
+  aliases: string[];
+  options: string[];
+  sampleValues: string[];
+  confidence: number;
+};
+
 export type MockExtractionResult = {
   document: AttendanceDocumentSummary;
   records: AttendanceRecord[];
+  suggestedFields: OcrFieldSuggestion[];
 };
 
 export type DraftField = {

@@ -10,6 +10,7 @@ export type OcrDocumentInput = {
   fileName: string;
   fileType: string | null;
   fileUrl: string;
+  filePath?: string;
 };
 
 export type OcrTemplateInput = {
@@ -27,6 +28,7 @@ export type OcrExtractedCell = {
   rawValue: OcrCellValue;
   normalizedValue: OcrCellValue;
   confidence: number;
+  issues?: string[];
   boundingBox?: Prisma.InputJsonObject | null;
 };
 
@@ -35,6 +37,25 @@ export type OcrExtractedRow = {
   data: Record<string, OcrCellValue>;
   values: OcrExtractedCell[];
   confidenceScore: number;
+};
+
+export type OcrSuggestedFieldType =
+  | "text"
+  | "email"
+  | "phone"
+  | "number"
+  | "signature"
+  | "date"
+  | "select";
+
+export type OcrSuggestedField = {
+  label: string;
+  key: string;
+  type: OcrSuggestedFieldType;
+  aliases: string[];
+  options: string[];
+  sampleValues: string[];
+  confidence: number;
 };
 
 export type OcrExtractionInput = {
@@ -47,6 +68,7 @@ export type OcrExtractionResult = {
   providerName: string;
   rawOcrJson: Prisma.InputJsonObject;
   rows: OcrExtractedRow[];
+  suggestedFields: OcrSuggestedField[];
 };
 
 export interface OcrProvider {

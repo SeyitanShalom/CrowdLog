@@ -21,8 +21,8 @@ const UPLOAD_DIRECTORY = resolve(process.cwd(), "uploads");
 export class DocumentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listDocuments(eventId: string) {
-    await this.ensureEventExists(eventId);
+  async listDocuments(eventId: string, userId: string) {
+    await this.ensureEventAccess(eventId, userId);
 
     const documents = await this.prisma.attendanceDocument.findMany({
       where: { eventId },
@@ -40,8 +40,9 @@ export class DocumentsService {
   async createDocumentFromUpload(
     eventId: string,
     file: UploadedAttendanceFile | undefined,
+    userId: string,
   ) {
-    await this.ensureEventExists(eventId);
+    await this.ensureEventAccess(eventId, userId);
 
     if (!file) {
       throw new BadRequestException("Upload an attendance sheet file.");
@@ -72,7 +73,7 @@ export class DocumentsService {
     return toAttendanceDocumentResponse(document);
   }
 
-  async getUploadedFile(fileName: string) {
+  async getUploadedFile(fileName: string, userId: string) {
     if (fileName !== basename(fileName)) {
       throw new BadRequestException("Invalid upload file name.");
     }
@@ -85,23 +86,50 @@ export class DocumentsService {
 
     const document = await this.prisma.attendanceDocument.findFirst({
       where: { fileUrl: `/uploads/${fileName}` },
+      include: {
+        event: {
+          include: { members: true },
+        },
+      },
     });
 
+    if (!document) {
+      throw new NotFoundException("Uploaded file not found.");
+    }
+
+    this.ensureCanAccessEvent(document.event, userId);
+
     return new StreamableFile(createReadStream(filePath), {
-      type: document?.fileType ?? "application/octet-stream",
-      disposition: `inline; filename="${document?.fileName ?? fileName}"`,
+      type: document.fileType ?? "application/octet-stream",
+      disposition: `inline; filename="${document.fileName}"`,
     });
   }
 
-  private async ensureEventExists(eventId: string) {
+  private async ensureEventAccess(eventId: string, userId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
-      select: { id: true },
+      include: { members: true },
     });
 
     if (!event) {
       throw new NotFoundException("Event not found.");
     }
+
+    this.ensureCanAccessEvent(event, userId);
+  }
+
+  private ensureCanAccessEvent(
+    event: { ownerId: string | null; members: Array<{ userId: string }> },
+    userId: string,
+  ) {
+    if (
+      event.ownerId === userId ||
+      event.members.some((member) => member.userId === userId)
+    ) {
+      return;
+    }
+
+    throw new NotFoundException("Event not found.");
   }
 
   private createStoredFileName(originalName: string) {

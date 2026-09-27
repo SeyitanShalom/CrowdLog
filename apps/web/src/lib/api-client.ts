@@ -1,6 +1,8 @@
 import type {
   AttendanceDocumentSummary,
   AttendanceRecord,
+  AuthSession,
+  AuthUser,
   CrowdLogEvent,
   MockExtractionResult,
   RecordData,
@@ -25,12 +27,76 @@ export type CreateEventPayload = {
   >;
 };
 
+export type SignInPayload = {
+  email: string;
+  name?: string;
+};
+
+export async function getCurrentSession() {
+  return request<AuthSession>("/auth/me");
+}
+
+export async function signIn(payload: SignInPayload) {
+  return request<{ user: AuthUser }>("/auth/sign-in", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function signOut() {
+  return request<{ ok: true }>("/auth/sign-out", {
+    method: "POST",
+  });
+}
+
 export async function listEvents() {
   return request<CrowdLogEvent[]>("/events");
 }
 
 export async function createEvent(payload: CreateEventPayload) {
   return request<CrowdLogEvent>("/events", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteEvent(eventId: string) {
+  return request<{ id: string }>(`/events/${eventId}`, {
+    method: "DELETE",
+  });
+}
+
+export type AddEventReviewerPayload = {
+  email: string;
+  name?: string;
+};
+
+export async function addEventReviewer(
+  eventId: string,
+  payload: AddEventReviewerPayload,
+) {
+  return request<CrowdLogEvent>(`/events/${eventId}/members`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function removeEventMember(eventId: string, memberId: string) {
+  return request<CrowdLogEvent>(`/events/${eventId}/members/${memberId}`, {
+    method: "DELETE",
+  });
+}
+
+export type CreateTemplateFieldPayload = Pick<
+  TemplateField,
+  "label" | "key" | "type" | "required" | "sortOrder" | "aliases" | "options"
+>;
+
+export async function createTemplateField(
+  templateId: string,
+  payload: CreateTemplateFieldPayload,
+) {
+  return request<TemplateField>(`/templates/${templateId}/fields`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -68,6 +134,13 @@ export async function mockExtractRecords(eventId: string, rowCount = 4) {
 
 export async function mockExtractDocument(documentId: string, rowCount = 4) {
   return request<MockExtractionResult>(`/documents/${documentId}/mock-extract`, {
+    method: "POST",
+    body: JSON.stringify({ rowCount }),
+  });
+}
+
+export async function extractDocument(documentId: string, rowCount = 25) {
+  return request<MockExtractionResult>(`/documents/${documentId}/extract`, {
     method: "POST",
     body: JSON.stringify({ rowCount }),
   });
@@ -112,6 +185,7 @@ async function request<T>(path: string, init?: RequestInit) {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
+      credentials: "include",
       headers: {
         ...(isFormData ? {} : { "Content-Type": "application/json" }),
         ...init?.headers,
