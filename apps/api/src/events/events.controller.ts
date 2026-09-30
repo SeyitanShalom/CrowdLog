@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from "@nestjs/common";
@@ -14,6 +15,7 @@ import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { CreateTemplateDto } from "./dto/create-template.dto";
 import { TemplateFieldInputDto } from "./dto/template-field-input.dto";
+import { UpdateEventMemberDto } from "./dto/update-event-member.dto";
 import { EventsService } from "./events.service";
 
 @Controller()
@@ -73,6 +75,22 @@ export class EventsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.eventsService.removeMember(eventId, memberId, user.id);
+  }
+
+  @Patch("events/:eventId/members/:memberId")
+  @UseGuards(AuthGuard)
+  updateMember(
+    @Param("eventId") eventId: string,
+    @Param("memberId") memberId: string,
+    @Body() dto: UpdateEventMemberDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.eventsService.updateMemberRole(
+      eventId,
+      memberId,
+      dto,
+      user.id,
+    );
   }
 
   @Post("events/:eventId/templates")

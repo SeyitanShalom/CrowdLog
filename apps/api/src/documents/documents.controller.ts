@@ -1,8 +1,10 @@
 import {
   Controller,
+  Delete,
   Get,
   Param,
   Post,
+  Put,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -61,6 +63,44 @@ export class DocumentsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.documentsService.createDocumentFromUpload(eventId, file, user.id);
+  }
+
+  @Put("documents/:documentId")
+  @UseGuards(AuthGuard)
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: {
+        fileSize: 10 * 1024 * 1024,
+        files: 1,
+      },
+      fileFilter: (_request, file, callback) => {
+        if (ALLOWED_FILE_TYPES.has(file.mimetype)) {
+          callback(null, true);
+          return;
+        }
+
+        callback(
+          new Error("Upload a PDF, JPEG, PNG, or WebP attendance sheet."),
+          false,
+        );
+      },
+    }),
+  )
+  replaceDocument(
+    @Param("documentId") documentId: string,
+    @UploadedFile() file: UploadedAttendanceFile | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.replaceDocumentFile(documentId, file, user.id);
+  }
+
+  @Delete("documents/:documentId")
+  @UseGuards(AuthGuard)
+  deleteDocument(
+    @Param("documentId") documentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.documentsService.deleteDocument(documentId, user.id);
   }
 
   @Get("uploads/:fileName")

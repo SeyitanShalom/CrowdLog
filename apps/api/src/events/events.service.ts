@@ -12,6 +12,7 @@ import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { CreateTemplateDto } from "./dto/create-template.dto";
 import { TemplateFieldInputDto } from "./dto/template-field-input.dto";
+import { UpdateEventMemberDto } from "./dto/update-event-member.dto";
 import {
   getEventInclude,
   toEventResponse,
@@ -200,6 +201,72 @@ export class EventsService {
     return this.getEvent(eventId, userId);
   }
 
+  async updateMemberRole(
+    eventId: string,
+    memberId: string,
+    dto: UpdateEventMemberDto,
+    userId: string,
+  ) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { members: true },
+    });
+
+    if (!event) {
+      throw new NotFoundException("Event not found.");
+    }
+
+    this.ensureCanManageEvent(event, userId);
+
+    const membership = event.members.find((member) => member.id === memberId);
+
+    if (!membership) {
+      throw new NotFoundException("Event member not found.");
+    }
+
+    const nextRole = toPrismaEventMemberRole(dto.role);
+
+    if (membership.role === nextRole) {
+      return this.getEvent(eventId, userId);
+    }
+
+    const remainingOwners = event.members.filter(
+      (member) =>
+        member.id !== memberId && member.role === EventMemberRole.OWNER,
+    );
+
+    if (
+      membership.role === EventMemberRole.OWNER &&
+      nextRole === EventMemberRole.REVIEWER &&
+      remainingOwners.length === 0
+    ) {
+      throw new BadRequestException("An event must have at least one owner.");
+    }
+
+    await this.prisma.eventMembership.update({
+      where: { id: memberId },
+      data: { role: nextRole },
+    });
+
+    if (
+      membership.role === EventMemberRole.OWNER &&
+      nextRole === EventMemberRole.REVIEWER &&
+      event.ownerId === membership.userId
+    ) {
+      await this.prisma.event.update({
+        where: { id: eventId },
+        data: { ownerId: remainingOwners[0].userId },
+      });
+    } else if (nextRole === EventMemberRole.OWNER && !event.ownerId) {
+      await this.prisma.event.update({
+        where: { id: eventId },
+        data: { ownerId: membership.userId },
+      });
+    }
+
+    return this.getEvent(eventId, userId);
+  }
+
   async createTemplate(eventId: string, dto: CreateTemplateDto, userId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
@@ -287,13 +354,13 @@ export class EventsService {
     },
     userId: string,
   ) {
-    if (
-      event.ownerId === userId ||
-      event.members.some(
-        (member) =>
-          member.userId === userId && member.role === EventMemberRole.OWNER,
-      )
-    ) {
+    const membership = event.members.find((member) => member.userId === userId);
+
+    if (membership?.role === EventMemberRole.OWNER) {
+      return;
+    }
+
+    if (!membership && event.ownerId === userId) {
       return;
     }
 
@@ -330,4 +397,8 @@ export class EventsService {
       // The database delete is the source of truth; missing local files are harmless.
     });
   }
+}
+
+function toPrismaEventMemberRole(role: UpdateEventMemberDto["role"]) {
+  return role === "owner" ? EventMemberRole.OWNER : EventMemberRole.REVIEWER;
 }

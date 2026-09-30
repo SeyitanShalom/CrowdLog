@@ -5,10 +5,10 @@ import {
   StreamableFile,
 } from "@nestjs/common";
 import { createReadStream } from "node:fs";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { AttendanceDocumentStatus } from "@prisma/client";
+import { AttendanceDocumentStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   toAttendanceDocumentResponse,
@@ -105,6 +105,108 @@ export class DocumentsService {
     });
   }
 
+  async replaceDocumentFile(
+    documentId: string,
+    file: UploadedAttendanceFile | undefined,
+    userId: string,
+  ) {
+    if (!file) {
+      throw new BadRequestException("Upload a replacement attendance sheet file.");
+    }
+
+    const document = await this.prisma.attendanceDocument.findUnique({
+      where: { id: documentId },
+      include: {
+        event: {
+          include: { members: true },
+        },
+      },
+    });
+
+    if (!document) {
+      throw new NotFoundException("Attendance document not found.");
+    }
+
+    this.ensureCanAccessEvent(document.event, userId);
+
+    await mkdir(UPLOAD_DIRECTORY, { recursive: true });
+
+    const storedFileName = this.createStoredFileName(file.originalname);
+    const filePath = join(UPLOAD_DIRECTORY, storedFileName);
+    const nextFileUrl = `/uploads/${storedFileName}`;
+
+    await writeFile(filePath, file.buffer);
+
+    try {
+      const updatedDocument = await this.prisma.$transaction(async (tx) => {
+        await tx.attendanceRecord.deleteMany({
+          where: { documentId },
+        });
+
+        return tx.attendanceDocument.update({
+          where: { id: documentId },
+          data: {
+            fileName: file.originalname,
+            fileType: file.mimetype,
+            fileUrl: nextFileUrl,
+            status: AttendanceDocumentStatus.UPLOADED,
+            rawOcrJson: Prisma.DbNull,
+          },
+          include: {
+            _count: {
+              select: { records: true },
+            },
+          },
+        });
+      });
+
+      await this.deleteUploadedFile(document.fileUrl);
+
+      return toAttendanceDocumentResponse(updatedDocument);
+    } catch (error) {
+      await this.deleteUploadedFile(nextFileUrl);
+      throw error;
+    }
+  }
+
+  async deleteDocument(documentId: string, userId: string) {
+    const document = await this.prisma.attendanceDocument.findUnique({
+      where: { id: documentId },
+      include: {
+        event: {
+          include: { members: true },
+        },
+        _count: {
+          select: { records: true },
+        },
+      },
+    });
+
+    if (!document) {
+      throw new NotFoundException("Attendance document not found.");
+    }
+
+    this.ensureCanAccessEvent(document.event, userId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.attendanceRecord.deleteMany({
+        where: { documentId },
+      });
+
+      await tx.attendanceDocument.delete({
+        where: { id: documentId },
+      });
+    });
+
+    await this.deleteUploadedFile(document.fileUrl);
+
+    return {
+      id: document.id,
+      eventId: document.eventId,
+      deletedRecordCount: document._count.records,
+    };
+  }
+
   private async ensureEventAccess(eventId: string, userId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
@@ -140,5 +242,21 @@ export class DocumentsService {
       .slice(0, 80);
 
     return `${Date.now()}-${randomUUID()}-${baseName || "attendance-sheet"}${extension}`;
+  }
+
+  private async deleteUploadedFile(fileUrl: string) {
+    if (!fileUrl.startsWith("/uploads/")) {
+      return;
+    }
+
+    const fileName = fileUrl.replace("/uploads/", "");
+
+    if (fileName !== basename(fileName)) {
+      return;
+    }
+
+    await unlink(join(UPLOAD_DIRECTORY, fileName)).catch(() => {
+      // The database is the source of truth; missing local files are harmless.
+    });
   }
 }

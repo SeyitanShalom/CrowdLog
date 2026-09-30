@@ -6,6 +6,7 @@ const {
   normalizeNoisyOcrTerm,
   normalizeOcrCellValue,
 } = require("../dist/ocr/ocr-value-normalization");
+const { MockOcrProvider } = require("../dist/ocr/mock-ocr.provider");
 
 function field(overrides) {
   return {
@@ -149,4 +150,91 @@ test("flags missing required signatures", () => {
   assert.equal(result.normalizedValue, false);
   assert.deepEqual(result.issues, ["Missing required value."]);
   assert.ok(result.confidence < 0.5);
+});
+
+test("mock OCR emits page-aware rows for multi-page document options", async () => {
+  const provider = new MockOcrProvider();
+  const result = await provider.extract({
+    document: {
+      id: "document_pdf",
+      eventId: "event_1",
+      fileName: "attendance.pdf",
+      fileType: "application/pdf",
+      fileUrl: "/uploads/attendance.pdf",
+    },
+    template: {
+      id: "template_1",
+      name: "Attendance",
+      fields: [
+        field({
+          id: "field_name",
+          label: "Name",
+          key: "name",
+          type: "TEXT",
+        }),
+      ],
+    },
+    options: {
+      rowCount: 2,
+      pageStart: 2,
+      pageCount: 3,
+      totalPages: 5,
+    },
+  });
+
+  assert.equal(result.rows.length, 6);
+  assert.deepEqual(
+    result.rows.map((row) => row.sourcePage),
+    [2, 2, 3, 3, 4, 4],
+  );
+  assert.deepEqual(result.rawOcrJson.pages, {
+    start: 2,
+    count: 3,
+    total: 5,
+  });
+});
+
+test("mock OCR emits form-style rows when requested", async () => {
+  const provider = new MockOcrProvider();
+  const result = await provider.extract({
+    document: {
+      id: "document_form",
+      eventId: "event_1",
+      fileName: "membership-form.png",
+      fileType: "image/png",
+      fileUrl: "/uploads/membership-form.png",
+    },
+    template: {
+      id: "template_1",
+      name: "Attendance",
+      fields: [
+        field({
+          id: "field_name",
+          label: "Name",
+          key: "name",
+          type: "TEXT",
+        }),
+        field({
+          id: "field_email",
+          label: "Email",
+          key: "email",
+          type: "EMAIL",
+          sortOrder: 2,
+        }),
+      ],
+    },
+    options: {
+      rowCount: 3,
+      layout: "form",
+    },
+  });
+
+  assert.equal(result.rows.length, 3);
+  assert.equal(result.rawOcrJson.mode, "form");
+  assert.equal(result.rawOcrJson.rows[0].formNumber, 1);
+  assert.deepEqual(
+    result.rawOcrJson.rows[0].fields.map((formField) => formField.key),
+    ["name", "email"],
+  );
+  assert.ok(result.rows[0].values[0].boundingBox);
 });

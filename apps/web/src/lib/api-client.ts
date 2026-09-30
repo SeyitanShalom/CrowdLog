@@ -4,6 +4,7 @@ import type {
   AuthSession,
   AuthUser,
   CrowdLogEvent,
+  EventMemberRole,
   MockExtractionResult,
   RecordData,
   RecordStatus,
@@ -87,6 +88,21 @@ export async function removeEventMember(eventId: string, memberId: string) {
   });
 }
 
+export type UpdateEventMemberPayload = {
+  role: EventMemberRole;
+};
+
+export async function updateEventMember(
+  eventId: string,
+  memberId: string,
+  payload: UpdateEventMemberPayload,
+) {
+  return request<CrowdLogEvent>(`/events/${eventId}/members/${memberId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export type CreateTemplateFieldPayload = Pick<
   TemplateField,
   "label" | "key" | "type" | "required" | "sortOrder" | "aliases" | "options"
@@ -111,6 +127,56 @@ export async function listRecords(eventId: string) {
   return request<AttendanceRecord[]>(`/events/${eventId}/records`);
 }
 
+export async function exportEventRecordsCsv(eventId: string) {
+  return exportEventRecordsFile({
+    path: `/events/${eventId}/records/export`,
+    fallbackFileName: `crowdlog-event-${eventId}.csv`,
+    failureLabel: "CSV export",
+  });
+}
+
+export async function exportEventRecordsXlsx(eventId: string) {
+  return exportEventRecordsFile({
+    path: `/events/${eventId}/records/export.xlsx`,
+    fallbackFileName: `crowdlog-event-${eventId}.xlsx`,
+    failureLabel: "Excel export",
+  });
+}
+
+async function exportEventRecordsFile({
+  path,
+  fallbackFileName,
+  failureLabel,
+}: {
+  path: string;
+  fallbackFileName: string;
+  failureLabel: string;
+}) {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      credentials: "include",
+    });
+  } catch {
+    throw new Error(`Could not reach the API at ${API_BASE_URL}.`);
+  }
+
+  if (!response.ok) {
+    const message = await readErrorMessage(response);
+    throw new Error(
+      message || `${failureLabel} failed with status ${response.status}.`,
+    );
+  }
+
+  return {
+    blob: await response.blob(),
+    fileName:
+      fileNameFromContentDisposition(response.headers.get("Content-Disposition")) ??
+      fallbackFileName,
+  };
+}
+
 export async function listDocuments(eventId: string) {
   return request<AttendanceDocumentSummary[]>(`/events/${eventId}/documents`);
 }
@@ -122,6 +188,28 @@ export async function uploadAttendanceDocument(eventId: string, file: File) {
   return request<AttendanceDocumentSummary>(`/events/${eventId}/documents`, {
     method: "POST",
     body: formData,
+  });
+}
+
+export async function replaceAttendanceDocument(documentId: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  return request<AttendanceDocumentSummary>(`/documents/${documentId}`, {
+    method: "PUT",
+    body: formData,
+  });
+}
+
+export type DeleteAttendanceDocumentResult = {
+  id: string;
+  eventId: string;
+  deletedRecordCount: number;
+};
+
+export async function deleteAttendanceDocument(documentId: string) {
+  return request<DeleteAttendanceDocumentResult>(`/documents/${documentId}`, {
+    method: "DELETE",
   });
 }
 
@@ -139,10 +227,20 @@ export async function mockExtractDocument(documentId: string, rowCount = 4) {
   });
 }
 
-export async function extractDocument(documentId: string, rowCount = 25) {
+export type ExtractDocumentOptions = {
+  rowCount?: number;
+  pageStart?: number;
+  pageCount?: number;
+  layout?: "table" | "form";
+};
+
+export async function extractDocument(
+  documentId: string,
+  options: ExtractDocumentOptions = { rowCount: 25 },
+) {
   return request<MockExtractionResult>(`/documents/${documentId}/extract`, {
     method: "POST",
-    body: JSON.stringify({ rowCount }),
+    body: JSON.stringify(options),
   });
 }
 
@@ -231,4 +329,28 @@ async function readErrorMessage(response: Response) {
   }
 
   return text || fallback;
+}
+
+function fileNameFromContentDisposition(header: string | null) {
+  if (!header) {
+    return null;
+  }
+
+  const encodedFileName = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+
+  if (encodedFileName) {
+    try {
+      return decodeURIComponent(encodedFileName);
+    } catch {
+      return encodedFileName;
+    }
+  }
+
+  const quotedFileName = header.match(/filename="([^"]+)"/i)?.[1];
+
+  if (quotedFileName) {
+    return quotedFileName;
+  }
+
+  return header.match(/filename=([^;]+)/i)?.[1]?.trim() ?? null;
 }

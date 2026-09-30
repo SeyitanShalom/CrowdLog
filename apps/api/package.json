@@ -6,13 +6,15 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "dev": "node --watch dist/main.js",
+    "test:api": "npm run build && node --test test/ocr-value-normalization.test.cjs test/auth-session.test.cjs test/event-role-access.test.cjs test/document-lifecycle.test.cjs test/pdf-extraction-options.test.cjs",
     "test:ocr": "npm run build && node --test test/ocr-value-normalization.test.cjs",
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
     "db:format": "prisma format",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "seed:portfolio": "node scripts/seed-portfolio-demo.cjs"
   },
   "dependencies": {
     "@crowdlog/shared": "file:../../packages/shared",

@@ -14,13 +14,16 @@
     "start": "npm run start --workspace @crowdlog/web",
     "start:api": "npm run start --workspace @crowdlog/api",
     "lint": "eslint apps/web/src apps/api/src packages/shared/src",
+    "test:api": "npm run test:api --workspace @crowdlog/api",
     "test:ocr": "npm run test:ocr --workspace @crowdlog/api",
     "db:validate": "npm run db:validate --workspace @crowdlog/api",
     "db:format": "npm run db:format --workspace @crowdlog/api",
     "db:generate": "npm run db:generate --workspace @crowdlog/api",
     "db:migrate": "npm run db:migrate --workspace @crowdlog/api",
     "db:deploy": "npm run db:deploy --workspace @crowdlog/api",
-    "db:studio": "npm run db:studio --workspace @crowdlog/api"
+    "db:studio": "npm run db:studio --workspace @crowdlog/api",
+    "seed:portfolio": "npm run seed:portfolio --workspace @crowdlog/api",
+    "screenshots:portfolio": "node scripts/capture-portfolio-screenshots.cjs"
   },
   "dependencies": {
     "next": "16.3.5",
@@ -28,6 +31,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@prisma/client": "^7.10.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -35,6 +39,9 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "i": "^0.3.7",
+    "npm": "^11.20.0",
+    "prisma": "^8.0.0-rc.19",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

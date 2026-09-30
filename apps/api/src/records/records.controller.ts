@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Res,
   UseGuards,
 } from "@nestjs/common";
 import { AuthGuard } from "../auth/auth.guard";
@@ -12,6 +13,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { CreateAttendanceRecordsDto } from "./dto/create-attendance-records.dto";
 import { MockExtractDto } from "./dto/mock-extract.dto";
+import { getXlsxContentType } from "./record-export";
 import { UpdateAttendanceRecordDto } from "./dto/update-attendance-record.dto";
 import { RecordsService } from "./records.service";
 
@@ -26,6 +28,50 @@ export class RecordsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.recordsService.listRecords(eventId, user.id);
+  }
+
+  @Get("events/:eventId/records/export")
+  @UseGuards(AuthGuard)
+  async exportRecords(
+    @Param("eventId") eventId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true })
+    response: { setHeader: (name: string, value: string) => void },
+  ) {
+    const exportFile = await this.recordsService.exportRecordsCsv(
+      eventId,
+      user.id,
+    );
+
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${exportFile.fileName}"`,
+    );
+
+    return exportFile.content;
+  }
+
+  @Get("events/:eventId/records/export.xlsx")
+  @UseGuards(AuthGuard)
+  async exportRecordsXlsx(
+    @Param("eventId") eventId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true })
+    response: { setHeader: (name: string, value: string) => void },
+  ) {
+    const exportFile = await this.recordsService.exportRecordsXlsx(
+      eventId,
+      user.id,
+    );
+
+    response.setHeader("Content-Type", getXlsxContentType());
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${exportFile.fileName}"`,
+    );
+
+    return exportFile.content;
   }
 
   @Post("events/:eventId/records")

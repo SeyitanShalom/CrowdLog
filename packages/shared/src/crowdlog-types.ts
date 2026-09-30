@@ -112,6 +112,9 @@ export type AttendanceRecord = {
   id: string;
   eventId: string;
   documentId: string | null;
+  reviewedByUserId: string | null;
+  reviewedBy: AuthUser | null;
+  reviewedAt: string | null;
   rowNumber: number | null;
   data: RecordData;
   confidenceScore: number | null;

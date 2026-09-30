@@ -3,15 +3,23 @@ import {
   AttendanceDocumentStatus,
   AttendanceRecordStatus,
   Prisma,
+  type AttendanceDocument,
   type TemplateField,
 } from "@prisma/client";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import {
   OCR_PROVIDER,
   type OcrExtractedRow,
+  type OcrExtractionOptions,
+  type OcrExtractionResult,
   type OcrProvider,
 } from "../ocr/ocr-provider.interface";
+import {
+  PdfPageRenderer,
+  type RenderedPdfPage,
+} from "../ocr/pdf-page-renderer";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   type CreateAttendanceRecordInputDto,
@@ -24,6 +32,11 @@ import {
   toAttendanceRecordResponse,
 } from "./attendance-record-response.mapper";
 import {
+  createCsvContent,
+  createXlsxWorkbook,
+  toFileSlug,
+} from "./record-export";
+import {
   fromPrismaDocumentStatus,
   toAttendanceDocumentResponse,
 } from "../documents/attendance-document-response.mapper";
@@ -31,14 +44,27 @@ import { toPrismaRecordStatus } from "./record-status.mapper";
 
 type RecordCellValue = string | number | boolean | null;
 type TemplateWithFields = {
+  eventTitle: string;
   id: string;
   name: string;
   fields: TemplateField[];
 };
+type ExportRecordWithDocument = Prisma.AttendanceRecordGetPayload<{
+  include: {
+    document: true;
+  };
+}>;
 
 const EXTRACTION_TRANSACTION_OPTIONS = {
   maxWait: 10000,
   timeout: 60000,
+};
+
+const EXPORT_STATUS_LABELS: Record<AttendanceRecordStatus, string> = {
+  DRAFT: "Draft",
+  NEEDS_REVIEW: "Needs review",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
 };
 
 @Injectable()
@@ -46,6 +72,7 @@ export class RecordsService {
   constructor(
     @Inject(OCR_PROVIDER) private readonly ocrProvider: OcrProvider,
     private readonly prisma: PrismaService,
+    private readonly pdfPageRenderer?: PdfPageRenderer,
   ) {}
 
   async listRecords(eventId: string, userId: string) {
@@ -58,6 +85,26 @@ export class RecordsService {
     });
 
     return records.map(toAttendanceRecordResponse);
+  }
+
+  async exportRecordsCsv(eventId: string, userId: string) {
+    const { template, records } = await this.getEventExportData(eventId, userId);
+    const rows = this.toExportRows(template.eventTitle, template.fields, records);
+
+    return {
+      fileName: `${toFileSlug(template.eventTitle)}-attendance.csv`,
+      content: createCsvContent(rows),
+    };
+  }
+
+  async exportRecordsXlsx(eventId: string, userId: string) {
+    const { template, records } = await this.getEventExportData(eventId, userId);
+    const rows = this.toExportRows(template.eventTitle, template.fields, records);
+
+    return {
+      fileName: `${toFileSlug(template.eventTitle)}-attendance.xlsx`,
+      content: createXlsxWorkbook("Attendance", rows),
+    };
   }
 
   async createRecords(
@@ -90,7 +137,7 @@ export class RecordsService {
     const extraction = await this.ocrProvider.extract({
       document: documentInput,
       template,
-      options: { rowCount: dto.rowCount },
+      options: { rowCount: dto.rowCount, layout: dto.layout },
     });
 
     const result = await this.prisma.$transaction(
@@ -162,18 +209,12 @@ export class RecordsService {
     this.ensureCanAccessEvent(document.event, userId);
 
     const template = await this.getEventTemplate(document.eventId, userId);
-    const extraction = await this.ocrProvider.extract({
-      document: {
-        id: document.id,
-        eventId: document.eventId,
-        fileName: document.fileName,
-        fileType: document.fileType,
-        fileUrl: document.fileUrl,
-        filePath: this.toUploadedFilePath(document.fileUrl),
-      },
+    const extractionOptions = await this.toExtractionOptions(document, dto);
+    const extraction = await this.extractDocumentWithOptions(
+      document,
       template,
-      options: { rowCount: dto.rowCount },
-    });
+      extractionOptions,
+    );
 
     const result = await this.prisma.$transaction(
       async (tx) => {
@@ -247,6 +288,7 @@ export class RecordsService {
     const data = dto.data
       ? this.cleanDataForFields(dto.data, template.fields)
       : undefined;
+    const status = dto.status ? toPrismaRecordStatus(dto.status) : undefined;
 
     const updatedRecord = await this.prisma.$transaction(async (tx) => {
       const record = await tx.attendanceRecord.update({
@@ -254,7 +296,8 @@ export class RecordsService {
         data: {
           dataJson: data ? this.toJsonObject(data) : undefined,
           confidenceScore: data ? 1 : undefined,
-          status: dto.status ? toPrismaRecordStatus(dto.status) : undefined,
+          status,
+          ...(status ? this.toReviewAttribution(status, userId) : {}),
         },
         include: getAttendanceRecordInclude(),
       });
@@ -331,11 +374,34 @@ export class RecordsService {
 
     const record = await this.prisma.attendanceRecord.update({
       where: { id: recordId },
-      data: { status },
+      data: {
+        status,
+        ...this.toReviewAttribution(status, userId),
+      },
       include: getAttendanceRecordInclude(),
     });
 
     return toAttendanceRecordResponse(record);
+  }
+
+  private toReviewAttribution(
+    status: AttendanceRecordStatus,
+    userId: string,
+  ): Prisma.AttendanceRecordUpdateInput {
+    if (
+      status === AttendanceRecordStatus.APPROVED ||
+      status === AttendanceRecordStatus.REJECTED
+    ) {
+      return {
+        reviewedBy: { connect: { id: userId } },
+        reviewedAt: new Date(),
+      };
+    }
+
+    return {
+      reviewedBy: { disconnect: true },
+      reviewedAt: null,
+    };
   }
 
   private async getEventTemplate(
@@ -370,9 +436,27 @@ export class RecordsService {
     }
 
     return {
+      eventTitle: event.title,
       id: template.id,
       name: template.name,
       fields: template.fields,
+    };
+  }
+
+  private async getEventExportData(eventId: string, userId: string) {
+    const template = await this.getEventTemplate(eventId, userId);
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { eventId },
+      orderBy: [{ rowNumber: "asc" }, { createdAt: "asc" }],
+      include: {
+        document: true,
+      },
+    });
+
+    return {
+      template,
+      records,
     };
   }
 
@@ -540,4 +624,249 @@ export class RecordsService {
 
     return resolve(process.cwd(), "uploads", fileName);
   }
+
+  private async toExtractionOptions(
+    document: Pick<AttendanceDocument, "fileType" | "fileUrl">,
+    dto: MockExtractDto,
+  ): Promise<OcrExtractionOptions> {
+    const options: OcrExtractionOptions = {
+      rowCount: dto.rowCount,
+      layout: dto.layout,
+    };
+
+    if (document.fileType !== "application/pdf") {
+      return options;
+    }
+
+    const totalPages = await this.detectPdfPageCount(
+      this.toUploadedFilePath(document.fileUrl),
+    );
+    const pageStart = Math.min(dto.pageStart ?? 1, totalPages);
+    const requestedPageCount = dto.pageCount ?? 1;
+    const pageCount = Math.min(
+      requestedPageCount,
+      Math.max(1, totalPages - pageStart + 1),
+    );
+
+    return {
+      ...options,
+      pageStart,
+      pageCount,
+      totalPages,
+    };
+  }
+
+  private async detectPdfPageCount(filePath: string | undefined) {
+    if (!filePath) {
+      return 1;
+    }
+
+    try {
+      const content = await readFile(filePath, "latin1");
+      const pageMatches = content.match(/\/Type\s*\/Page\b/g);
+
+      return Math.max(1, pageMatches?.length ?? 1);
+    } catch {
+      return 1;
+    }
+  }
+
+  private async extractDocumentWithOptions(
+    document: AttendanceDocument,
+    template: TemplateWithFields,
+    options: OcrExtractionOptions,
+  ): Promise<OcrExtractionResult> {
+    const documentInput = {
+      id: document.id,
+      eventId: document.eventId,
+      fileName: document.fileName,
+      fileType: document.fileType,
+      fileUrl: document.fileUrl,
+      filePath: this.toUploadedFilePath(document.fileUrl),
+    };
+
+    if (document.fileType !== "application/pdf" || !this.pdfPageRenderer) {
+      return this.ocrProvider.extract({
+        document: documentInput,
+        template,
+        options,
+      });
+    }
+
+    const renderResult = await this.pdfPageRenderer.renderPages({
+      filePath: documentInput.filePath,
+      fileName: document.fileName,
+      pageStart: options.pageStart ?? 1,
+      pageCount: options.pageCount ?? 1,
+    });
+
+    if (!renderResult.rendered) {
+      return this.ocrProvider.extract({
+        document: documentInput,
+        template,
+        options,
+      });
+    }
+
+    try {
+      return await this.extractRenderedPdfPages(
+        document,
+        template,
+        options,
+        renderResult.pages,
+      );
+    } finally {
+      await this.pdfPageRenderer.cleanupRenderedPages(renderResult.pages);
+    }
+  }
+
+  private async extractRenderedPdfPages(
+    document: AttendanceDocument,
+    template: TemplateWithFields,
+    options: OcrExtractionOptions,
+    pages: RenderedPdfPage[],
+  ): Promise<OcrExtractionResult> {
+    const pageResults = await Promise.all(
+      pages.map((page) =>
+        this.ocrProvider.extract({
+          document: {
+            id: document.id,
+            eventId: document.eventId,
+            fileName: page.fileName,
+            fileType: page.fileType,
+            fileUrl: `rendered-pdf://${document.id}/${page.pageNumber}`,
+            filePath: page.filePath,
+          },
+          template,
+          options: {
+            rowCount: options.rowCount,
+            layout: options.layout,
+            pageStart: page.pageNumber,
+            pageCount: 1,
+            totalPages: options.totalPages,
+          },
+        }),
+      ),
+    );
+    const rows = pageResults.flatMap((result, resultIndex) =>
+      result.rows.map((row) => ({
+        ...row,
+        sourcePage: row.sourcePage ?? pages[resultIndex].pageNumber,
+      })),
+    );
+
+    return {
+      providerName: "pdf-page-renderer",
+      rawOcrJson: {
+        provider: "pdf-page-renderer",
+        renderer: "pdftoppm",
+        document: {
+          id: document.id,
+          fileName: document.fileName,
+          fileType: document.fileType,
+          fileUrl: document.fileUrl,
+        },
+        pages: {
+          start: options.pageStart ?? 1,
+          count: pages.length,
+          total: options.totalPages ?? pages.length,
+        },
+        layout: options.layout ?? "table",
+        pageResults: pageResults.map((result, index) => ({
+          page: pages[index].pageNumber,
+          provider: result.providerName,
+          rawOcrJson: result.rawOcrJson,
+        })),
+      } as Prisma.InputJsonObject,
+      rows: rows.map((row, index) => ({
+        ...row,
+        rowNumber: index + 1,
+      })),
+      suggestedFields: this.dedupeSuggestedFields(
+        pageResults.flatMap((result) => result.suggestedFields),
+      ),
+    };
+  }
+
+  private dedupeSuggestedFields(
+    suggestedFields: OcrExtractionResult["suggestedFields"],
+  ) {
+    const seenKeys = new Set<string>();
+
+    return suggestedFields.filter((suggestion) => {
+      if (seenKeys.has(suggestion.key)) {
+        return false;
+      }
+
+      seenKeys.add(suggestion.key);
+      return true;
+    });
+  }
+
+  private toExportRows(
+    eventTitle: string,
+    fields: TemplateField[],
+    records: ExportRecordWithDocument[],
+  ) {
+    const headers = [
+      "Event",
+      "Row",
+      "Status",
+      "Confidence",
+      "Document",
+      ...fields.map((field) => field.label),
+    ];
+    const rows = records.map((record) => {
+      const data = this.jsonRecord(record.dataJson);
+
+      return [
+        eventTitle,
+        String(record.rowNumber ?? ""),
+        EXPORT_STATUS_LABELS[record.status],
+        this.confidenceLabel(record.confidenceScore),
+        record.document?.fileName ?? "",
+        ...fields.map((field) => this.valueToString(data[field.key])),
+      ];
+    });
+
+    return [headers, ...rows];
+  }
+
+  private jsonRecord(value: Prisma.JsonValue) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+
+    const result: Record<string, RecordCellValue> = {};
+
+    for (const [key, item] of Object.entries(value)) {
+      if (
+        typeof item === "string" ||
+        typeof item === "number" ||
+        typeof item === "boolean" ||
+        item === null
+      ) {
+        result[key] = item;
+      }
+    }
+
+    return result;
+  }
+
+  private valueToString(value: RecordCellValue | undefined) {
+    if (value === null || value === undefined) {
+      return "";
+    }
+
+    return String(value);
+  }
+
+  private confidenceLabel(confidence: number | null | undefined) {
+    if (confidence === null || confidence === undefined) {
+      return "n/a";
+    }
+
+    return `${Math.round(confidence * 100)}%`;
+  }
+
 }

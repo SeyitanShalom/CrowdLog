@@ -4,6 +4,13 @@ import { fromPrismaRecordStatus } from "./record-status.mapper";
 
 const recordInclude = {
   document: true,
+  reviewedBy: {
+    select: {
+      id: true,
+      email: true,
+      name: true,
+    },
+  },
   values: {
     include: {
       field: true,
@@ -28,6 +35,9 @@ export function toAttendanceRecordResponse(record: AttendanceRecordWithValues) {
     id: record.id,
     eventId: record.eventId,
     documentId: record.documentId,
+    reviewedByUserId: record.reviewedByUserId,
+    reviewedBy: record.reviewedBy,
+    reviewedAt: record.reviewedAt?.toISOString() ?? null,
     rowNumber: record.rowNumber,
     data: jsonRecord(record.dataJson),
     confidenceScore: record.confidenceScore,

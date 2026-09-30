@@ -184,13 +184,25 @@ export class MockOcrProvider implements OcrProvider {
 
   async extract(input: OcrExtractionInput): Promise<OcrExtractionResult> {
     const rowCount = input.options?.rowCount ?? 4;
-    const rows = this.buildRows(input.template.fields, rowCount);
+    const pageStart = input.options?.pageStart ?? 1;
+    const pageCount = input.options?.pageCount ?? 1;
+    const totalPages = input.options?.totalPages ?? pageStart + pageCount - 1;
+    const layout = input.options?.layout ?? "table";
+    const rows =
+      layout === "form"
+        ? this.buildFormRows(input.template.fields, rowCount, pageStart, pageCount)
+        : this.buildTableRows(
+            input.template.fields,
+            rowCount,
+            pageStart,
+            pageCount,
+          );
 
     return {
       providerName: this.name,
       rawOcrJson: {
         provider: this.name,
-        mode: "table",
+        mode: layout,
         document: {
           id: input.document.id ?? null,
           fileName: input.document.fileName,
@@ -201,41 +213,116 @@ export class MockOcrProvider implements OcrProvider {
           id: input.template.id,
           name: input.template.name,
         },
-        rows: rows.map((row) => row.data),
+        pages: {
+          start: pageStart,
+          count: pageCount,
+          total: totalPages,
+        },
+        rows:
+          layout === "form"
+            ? rows.map((row) => ({
+                page: row.sourcePage ?? null,
+                formNumber: row.rowNumber,
+                fields: row.values.map((value) => ({
+                  label: value.field.label,
+                  key: value.field.key,
+                  value: value.normalizedValue,
+                  confidence: value.confidence,
+                })),
+              }))
+            : rows.map((row) => ({
+                page: row.sourcePage ?? null,
+                data: row.data,
+              })),
       } satisfies Prisma.InputJsonObject,
       rows,
       suggestedFields: [],
     };
   }
 
-  private buildRows(fields: TemplateField[], rowCount: number) {
-    return Array.from({ length: rowCount }, (_, rowIndex) => {
-      const person = people[rowIndex % people.length];
-      const values = fields.map((field, fieldIndex) => {
-        const rawValue = this.mockValueForField(field, person, rowIndex);
-        const confidence = this.mockConfidence(rowIndex, fieldIndex);
+  private buildTableRows(
+    fields: TemplateField[],
+    rowCount: number,
+    pageStart: number,
+    pageCount: number,
+  ) {
+    return Array.from({ length: pageCount }, (_, pageIndex) =>
+      Array.from({ length: rowCount }, (_, rowIndex) => {
+        const globalRowIndex = pageIndex * rowCount + rowIndex;
+        const pageNumber = pageStart + pageIndex;
+        const person = people[globalRowIndex % people.length];
+        const values = fields.map((field, fieldIndex) => {
+          const rawValue = this.mockValueForField(field, person, globalRowIndex);
+          const confidence = this.mockConfidence(globalRowIndex, fieldIndex);
+
+          return {
+            field,
+            rawValue,
+            normalizedValue: rawValue,
+            confidence,
+          };
+        });
+
+        const data = Object.fromEntries(
+          values.map((value) => [value.field.key, value.normalizedValue]),
+        );
+        const confidenceScore =
+          values.reduce((sum, value) => sum + value.confidence, 0) /
+          values.length;
 
         return {
-          field,
-          rawValue,
-          normalizedValue: rawValue,
-          confidence,
+          rowNumber: globalRowIndex + 1,
+          sourcePage: pageNumber,
+          data,
+          values,
+          confidenceScore: Number(confidenceScore.toFixed(2)),
         };
-      });
+      }),
+    ).flat() satisfies OcrExtractedRow[];
+  }
 
-      const data = Object.fromEntries(
-        values.map((value) => [value.field.key, value.normalizedValue]),
-      );
-      const confidenceScore =
-        values.reduce((sum, value) => sum + value.confidence, 0) / values.length;
+  private buildFormRows(
+    fields: TemplateField[],
+    rowCount: number,
+    pageStart: number,
+    pageCount: number,
+  ) {
+    const formsPerPage = Math.max(1, Math.min(4, rowCount));
 
-      return {
-        rowNumber: rowIndex + 1,
-        data,
-        values,
-        confidenceScore: Number(confidenceScore.toFixed(2)),
-      };
-    }) satisfies OcrExtractedRow[];
+    return Array.from({ length: pageCount }, (_, pageIndex) =>
+      Array.from({ length: formsPerPage }, (_, formIndex) => {
+        const globalFormIndex = pageIndex * formsPerPage + formIndex;
+        const pageNumber = pageStart + pageIndex;
+        const person = people[globalFormIndex % people.length];
+        const values = fields.map((field, fieldIndex) => {
+          const rawValue = this.mockValueForField(field, person, globalFormIndex);
+          const confidence = this.mockFormConfidence(globalFormIndex, fieldIndex);
+
+          return {
+            field,
+            rawValue,
+            normalizedValue: rawValue,
+            confidence,
+            boundingBox: this.mockFormBoundingBox(fieldIndex, formIndex),
+          };
+        });
+
+        const data = Object.fromEntries(
+          values.map((value) => [value.field.key, value.normalizedValue]),
+        );
+        const confidenceScore =
+          values.reduce((sum, value) => sum + value.confidence, 0) /
+          values.length;
+
+        return {
+          rowNumber: globalFormIndex + 1,
+          sourcePage: pageNumber,
+          data,
+          values,
+          confidenceScore: Number(confidenceScore.toFixed(2)),
+        };
+      }),
+    ).flat() satisfies OcrExtractedRow[];
   }
 
   private mockValueForField(
@@ -342,5 +429,29 @@ export class MockOcrProvider implements OcrProvider {
     }
 
     return 0.92;
+  }
+
+  private mockFormConfidence(formIndex: number, fieldIndex: number) {
+    if ((formIndex + fieldIndex) % 7 === 0) {
+      return 0.69;
+    }
+
+    if (formIndex === 1 && fieldIndex === 2) {
+      return 0.61;
+    }
+
+    return 0.9;
+  }
+
+  private mockFormBoundingBox(fieldIndex: number, formIndex: number) {
+    const row = Math.floor(fieldIndex / 2);
+    const column = fieldIndex % 2;
+
+    return {
+      x: 32 + column * 250,
+      y: 72 + formIndex * 148 + row * 36,
+      width: 210,
+      height: 24,
+    } satisfies Prisma.InputJsonObject;
   }
 }

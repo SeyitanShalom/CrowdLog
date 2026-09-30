@@ -21,6 +21,10 @@ export type OcrTemplateInput = {
 
 export type OcrExtractionOptions = {
   rowCount?: number;
+  pageStart?: number;
+  pageCount?: number;
+  totalPages?: number;
+  layout?: "table" | "form";
 };
 
 export type OcrExtractedCell = {
@@ -34,6 +38,7 @@ export type OcrExtractedCell = {
 
 export type OcrExtractedRow = {
   rowNumber: number;
+  sourcePage?: number;
   data: Record<string, OcrCellValue>;
   values: OcrExtractedCell[];
   confidenceScore: number;
