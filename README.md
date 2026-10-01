@@ -62,8 +62,16 @@ The current app lets a user:
 - run local Windows OCR extraction against a selected uploaded image document
 - choose a page range when extracting PDF attendance sheets
 - run page-aware mock fallback extraction for uploaded PDF documents
+- render selected PDF pages into images for provider extraction when `pdftoppm`
+  is available
 - choose table-row or form-entry extraction layout for selected documents
 - run form-style mock fallback extraction into reviewed records
+- parse label/value form layouts through Windows OCR for image inputs and
+  rendered PDF pages
+- send OCR extraction requests to a generic HTTP OCR endpoint when configured
+- send OCR extraction requests to Azure Document Intelligence when configured
+- map Azure layout tables into reviewed records with bounding boxes and
+  suggested fields for unmapped columns
 - replace uploaded attendance sheets and clear their old extracted rows
 - delete uploaded attendance sheets with their extracted rows and local files
 - suggest missing template fields from OCR-detected sheet columns
@@ -72,10 +80,11 @@ The current app lets a user:
 - clean and validate extracted values by field type before review
 - lower cell and row confidence when OCR values look invalid or incomplete
 - show OCR validation issue text in the review table
-- run focused OCR normalization tests
+- run focused OCR normalization and provider adapter tests
 - run focused API auth/session and role-access tests
 - clean common low-resolution OCR glyph mistakes in headers and values
 - use adaptive Windows OCR row grouping and center-based column matching
+- use Windows OCR label/value matching for first-pass form-layout extraction
 - review extracted records in an editable table
 - save, approve, or reject extracted rows as an event member
 - record which reviewer approved or rejected each row
@@ -91,8 +100,9 @@ The current app lets a user:
 - capture portfolio screenshots with a Chrome/Edge headless script
 - store the captured five-image portfolio screenshot gallery in `docs/screenshots`
 
-There is no cloud OCR, external auth provider, SMTP email adapter, external
-export API, or advanced analytics yet.
+There is no Google Document AI/Vision adapter, AWS Textract adapter, external
+auth provider, SMTP email adapter, external export API, or advanced analytics
+yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -117,7 +127,9 @@ language as the frontend.
 - ORM: Prisma
 - Styling: Tailwind CSS
 - Storage: local file storage first, cloud storage later
-- OCR: local Windows OCR for image uploads, mock OCR fallback, cloud OCR later
+- OCR: local Windows OCR for image uploads, Azure Document Intelligence, generic
+  HTTP OCR endpoint, mock OCR fallback, additional vendor-specific cloud OCR
+  later
 
 ## Current Architecture
 
@@ -249,6 +261,34 @@ packages/shared/src/template-utils.ts
     fetches the event by id, shows owner/reviewer counts and grouped roster
     sections, and lets owners add reviewers, remove reviewers, promote reviewers
     to owners, and demote owners when another owner remains.
+25. Add first real form-layout OCR parsing. Done for local Windows OCR:
+    when extraction requests `layout: "form"`, `WindowsOcrProvider` now scans
+    OCR words for template field labels using keys, labels, aliases, and common
+    field terms; extracts same-line or nearby values; groups repeated form
+    entries; normalizes and validates values by field type; carries bounding
+    boxes; and emits form-shaped raw OCR metadata. Focused OCR tests cover
+    same-line label/value pairs, low-resolution value cleanup, signature values,
+    and repeated form entries.
+26. Add a generic cloud OCR bridge. Done for provider-neutral HTTP:
+    `OCR_PROVIDER="http"` now sends document metadata, base64 file content,
+    template fields, and extraction options to `OCR_HTTP_ENDPOINT`. The HTTP
+    provider maps remote rows back onto the local template fields, normalizes
+    field values when needed, preserves bounding boxes, accepts suggested fields,
+    and supports an optional bearer token. In `auto` mode, CrowdLog can try the
+    HTTP OCR endpoint before falling back to mock rows when Windows OCR is not
+    available. Focused OCR tests cover request payloads, bearer auth, response
+    mapping, value normalization, suggested fields, and explicit provider
+    selection.
+27. Add a first vendor-specific cloud OCR adapter. Done for Azure Document
+    Intelligence:
+    `OCR_PROVIDER="azure"` now posts local uploaded document bytes to Azure
+    Document Intelligence, polls the provider's async result URL, maps layout
+    table cells back onto saved template fields, normalizes values by field
+    type, preserves bounding boxes, and returns suggested fields for unmapped
+    table columns. In `auto` mode, CrowdLog can try Azure after local Windows
+    OCR and before the generic HTTP bridge when Azure credentials are configured.
+    Focused OCR tests cover the Azure request, polling flow, table mapping,
+    suggested fields, and explicit provider selection.
 
 ## API Routes Implemented
 
@@ -520,22 +560,59 @@ Provider selection is controlled by API environment variables:
 ```env
 OCR_PROVIDER="auto"
 OCR_FALLBACK_TO_MOCK="true"
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT="https://your-resource.cognitiveservices.azure.com"
+AZURE_DOCUMENT_INTELLIGENCE_KEY=""
+AZURE_DOCUMENT_INTELLIGENCE_MODEL_ID="prebuilt-layout"
+AZURE_DOCUMENT_INTELLIGENCE_API_VERSION="2024-11-30"
+AZURE_DOCUMENT_INTELLIGENCE_FEATURES=""
+AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS="1000"
+AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS="60000"
+OCR_HTTP_ENDPOINT="https://ocr-provider.example/extract"
+OCR_HTTP_BEARER_TOKEN=""
+OCR_HTTP_INCLUDE_FILE="true"
 ```
 
-- `auto` uses local Windows OCR for uploaded image files on Windows, then falls
-  back to mock rows when local OCR is unavailable.
+- `auto` uses local Windows OCR for uploaded image files on Windows, then tries
+  Azure Document Intelligence when configured, then falls back to the configured
+  HTTP OCR endpoint when available, then mock rows.
 - `mock` always generates mock rows.
 - `windows` requires local Windows OCR for uploaded image files.
+- `azure` sends local uploaded documents to Azure Document Intelligence.
+- `http` sends a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
+
+When `OCR_PROVIDER="azure"`, set `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` and
+`AZURE_DOCUMENT_INTELLIGENCE_KEY`. The adapter defaults to the
+`prebuilt-layout` model and Azure Document Intelligence API version
+`2024-11-30`, sends the document bytes to the async analyze endpoint, carries
+PDF page-range choices through the `pages` query parameter, and polls the
+provider result URL until extraction succeeds. Set
+`AZURE_DOCUMENT_INTELLIGENCE_FEATURES` when a deployment wants optional Azure
+features such as `keyValuePairs` for form-style documents.
+
+Azure layout tables are mapped into CrowdLog review rows by matching column
+headers against field keys, labels, saved aliases, and common attendance terms.
+Values still pass through CrowdLog's existing type normalization and validation
+before they are saved. Unmapped Azure table columns can be returned as
+`suggestedFields` so the reviewer can add missing template fields and
+re-extract.
+
+When `OCR_HTTP_ENDPOINT` is set, the HTTP OCR provider posts document metadata,
+base64 file content, template fields, and extraction options to the endpoint.
+`OCR_HTTP_BEARER_TOKEN` adds an `Authorization: Bearer ...` header.
+`OCR_HTTP_INCLUDE_FILE="false"` sends metadata only, which is useful when an
+external provider can read the document by URL or another private gateway.
 
 For uploaded PDFs, extraction now accepts a page range. The backend estimates
 the PDF page count from the local uploaded file and clamps the requested range
-before calling the OCR provider. Until a real PDF rendering/OCR provider is
-added, PDFs use the mock fallback with page-aware rows and raw OCR metadata.
+before calling the OCR provider. When `pdftoppm` is available, the backend
+renders the selected PDF pages to temporary PNG files and sends each page
+through the configured OCR provider; if rendering is unavailable, PDFs still use
+the page-aware mock fallback with raw OCR metadata.
 
 Extraction also accepts a layout hint: `table` for attendance rows or `form`
-for form-entry sheets. The current real Windows OCR path remains table-focused,
-while the mock fallback can generate form-style extracted records for workflow
-testing.
+for form-entry sheets. The mock fallback can generate form-style extracted
+records for workflow testing, and the Windows OCR provider now has a first real
+form parser for label/value layouts.
 
 The Windows OCR provider maps recognized table text into fields that already
 exist on the event template. It now considers field keys, labels, saved aliases,
@@ -550,23 +627,36 @@ The review workspace already highlights low-confidence values and now shows
 validation issue text, so invalid email, phone, number, date, select, signature,
 or required-field values can be routed toward human correction.
 
+For form-layout extraction, Windows OCR matches labels using field keys, labels,
+saved aliases, and common field terms, then captures same-line or nearby values.
+Repeated label groups can become separate extracted form entries, so simple
+membership or sign-in forms can flow into the same review table as attendance
+rows.
+
 When OCR detects a likely missing sheet column, the review workspace can suggest
 a new template field and re-extract the selected document after adding it.
 
 ## Next Phase
 
-The invitation provider pass and standalone team-management route are complete
-for the current app shape. SMTP can stay as an optional backlog item unless a
-deployment specifically needs it.
+The invitation provider pass, standalone team-management route, PDF render hook,
+first Windows form parser, generic HTTP OCR bridge, and first Azure Document
+Intelligence adapter are complete for the current app shape. SMTP can stay as
+an optional backlog item unless a deployment specifically needs it.
 
-1. Add real PDF page rendering/OCR beyond the current page-aware mock fallback.
-2. Add real form-layout OCR parsing beyond the current form-style mock fallback.
+1. Broaden form-layout OCR for multiline fields, checkboxes, and handwritten
+   signature regions.
+2. Harden production PDF OCR behavior, including renderer availability checks,
+   full-document cloud extraction choices, and clearer vendor fallback behavior.
+3. Add more vendor-specific OCR adapters, such as Google Document AI/Vision or
+   AWS Textract, if a deployment needs them.
 
 ## Still Left To Build
 
-- Cloud OCR provider integration.
-- Real form-layout OCR parsing beyond the current form-style mock fallback.
-- Real PDF page rendering/OCR beyond the current page-aware mock fallback.
+- Additional vendor-specific cloud OCR adapters beyond Azure Document
+  Intelligence and the generic HTTP OCR bridge.
+- Broader form-layout OCR parsing beyond the first Windows label/value parser.
+- Production PDF OCR hardening, including renderer availability checks and
+  vendor-specific fallback behavior.
 - Editing existing events/templates instead of only creating new ones.
 - SMTP transactional email delivery beyond the current
   console/file/http/Resend/Postmark/SendGrid invitation providers.
@@ -611,14 +701,29 @@ Already done:
 - Mock extraction can run against an uploaded document
 - OCR provider boundary with mock OCR as the first provider
 - Local Windows OCR can extract uploaded image documents through the provider boundary
-- PDF document extraction accepts a page range and uses page-aware mock fallback rows
+- PDF document extraction accepts a page range, can render selected pages to
+  temporary PNG files with `pdftoppm`, and falls back to page-aware mock rows
+  when rendering/provider extraction is unavailable
 - Document extraction can request table-row or form-entry layout, with form-style mock fallback rows
+- Windows OCR can parse first-pass form label/value layouts, normalize the
+  extracted values by field type, include bounding boxes, and split repeated
+  label groups into separate form entries
+- `OCR_PROVIDER="http"` can send a provider-neutral OCR payload with document
+  metadata, base64 file content, template fields, and extraction options to
+  `OCR_HTTP_ENDPOINT`; in `auto` mode, CrowdLog can try this HTTP OCR bridge
+  before mock fallback when Windows OCR is unavailable
+- `OCR_PROVIDER="azure"` can send local uploaded documents to Azure Document
+  Intelligence, poll the async analyze result, map layout tables into saved
+  template fields, preserve bounding boxes, return suggested fields for unmapped
+  columns, and run before the generic HTTP bridge in `auto` mode when Azure is
+  configured
 - Uploaded documents can be replaced or deleted, with extracted rows and local files cleaned up
 - OCR can suggest missing uploaded sheet columns, such as `taxa`
 - Windows OCR can map columns using labels, keys, aliases, and common header variants
 - Windows OCR can clean and validate extracted values by field type and lower confidence for suspicious cells
 - Review cells show OCR validation issue text
-- Focused OCR normalization tests can run with `npm run test:ocr`
+- Focused OCR normalization, Windows form-layout, HTTP OCR provider, and Azure
+  Document Intelligence provider tests can run with `npm run test:ocr`
 - Windows OCR has low-resolution glyph cleanup and adaptive row/column grouping
 - Local email sign-in/sign-out uses HTTP-only sessions
 - Events, documents, extraction, and records are protected by owner/member access
@@ -648,7 +753,7 @@ Already done:
 - Owners manage reviewers, event deletion, templates, and suggested OCR fields
 - Reviewers can access the event workspace and review extracted rows
 - Approved/rejected rows track the reviewer and reviewed time for reporting
-- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, form-style extraction options, and OCR normalization
+- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, and OCR normalization
 - Run the focused API suite with `npm run test:api`
 - Review workspace has client-side search, status filters, summary counts, reporting panels, visible-row CSV export, and server-side full-event CSV/Excel export
 - Portfolio case study and screenshot guide live in `docs/`
@@ -657,7 +762,7 @@ Already done:
 - The five captured portfolio screenshots are stored in `docs/screenshots`
 
 Current next phase:
-The invitation provider pass and standalone team-management route are complete for now. Continue with the OCR/document depth pass: real PDF rendering/OCR or real form-layout OCR parsing. SMTP remains an optional backlog adapter only if a deployment needs it.
+The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, and Azure Document Intelligence adapter are complete for now. Continue with OCR/document depth: broader form-layout parsing for multiline fields, checkboxes, and handwritten signature regions; production PDF OCR hardening; or additional vendor-specific adapters such as Google Document AI/Vision or AWS Textract if a deployment needs them. SMTP remains an optional backlog adapter only if a deployment needs it.
 
 Please inspect the repo first, avoid reading .env secrets, then continue from the OCR/document depth phase.
 ```

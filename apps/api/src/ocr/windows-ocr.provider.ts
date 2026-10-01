@@ -55,6 +55,14 @@ type HeaderCandidate = {
   words: WindowsOcrWord[];
 };
 
+type FormLabelMatch = {
+  field: TemplateField;
+  text: string;
+  words: WindowsOcrWord[];
+  score: number;
+  confidence: number;
+};
+
 @Injectable()
 export class WindowsOcrProvider implements OcrProvider {
   readonly name = "windows-ocr";
@@ -65,6 +73,11 @@ export class WindowsOcrProvider implements OcrProvider {
     }
 
     const ocr = await this.runWindowsOcr(input.document.filePath);
+
+    if (input.options?.layout === "form") {
+      return this.extractForm(input, ocr);
+    }
+
     const columns = this.resolveColumns(input.template.fields, ocr.words);
     const bodyRows = this.groupBodyWords(ocr.words);
     const rows = this.buildRows(columns, bodyRows, input);
@@ -128,6 +141,346 @@ export class WindowsOcrProvider implements OcrProvider {
     );
 
     return JSON.parse(stdout) as WindowsOcrOutput;
+  }
+
+  private extractForm(
+    input: OcrExtractionInput,
+    ocr: WindowsOcrOutput,
+  ): OcrExtractionResult {
+    const rows = this.buildFormRows(input.template.fields, ocr.words, input);
+
+    return {
+      providerName: this.name,
+      rawOcrJson: {
+        provider: this.name,
+        mode: "form",
+        document: {
+          id: input.document.id ?? null,
+          fileName: input.document.fileName,
+          fileType: input.document.fileType,
+          fileUrl: input.document.fileUrl,
+        },
+        text: ocr.text,
+        words: ocr.words.slice(0, 300),
+        rows: rows.map((row) => ({
+          page: row.sourcePage ?? null,
+          formNumber: row.rowNumber,
+          fields: row.values.map((value) => ({
+            label: value.field.label,
+            key: value.field.key,
+            value: value.normalizedValue,
+            confidence: value.confidence,
+            issues: value.issues ?? [],
+            boundingBox: value.boundingBox ?? null,
+          })),
+        })),
+      } as Prisma.InputJsonObject,
+      rows,
+      suggestedFields: [],
+    };
+  }
+
+  private buildFormRows(
+    fields: TemplateField[],
+    words: WindowsOcrWord[],
+    input: OcrExtractionInput,
+  ) {
+    const rowCount = input.options?.rowCount ?? 25;
+    const usableWords = words
+      .filter((word) => this.isUsableWord(word) && word.x >= 20)
+      .sort((left, right) => left.y - right.y || left.x - right.x);
+    const labelMatches = this.findFormLabelMatches(fields, usableWords);
+    const formGroups = this.groupFormLabelMatches(labelMatches, fields);
+
+    return formGroups
+      .map((matches, index) =>
+        this.toFormExtractedRow(matches, usableWords, fields, index, input),
+      )
+      .filter((row) =>
+        Object.values(row.data).some(
+          (value) => value !== "" && value !== null && value !== false,
+        ),
+      )
+      .slice(0, rowCount);
+  }
+
+  private findFormLabelMatches(
+    fields: TemplateField[],
+    words: WindowsOcrWord[],
+  ) {
+    const matches: FormLabelMatch[] = [];
+
+    for (const candidate of this.buildFormLabelCandidates(words)) {
+      for (const field of fields) {
+        const score = this.headerMatchScore(candidate.text, field);
+
+        if (score === null || score > MAX_HEADER_MATCH_SCORE) {
+          continue;
+        }
+
+        matches.push({
+          field,
+          text: candidate.text,
+          words: candidate.words,
+          score,
+          confidence: this.headerMatchConfidence(score),
+        });
+      }
+    }
+
+    matches.sort(
+      (left, right) =>
+        left.score - right.score ||
+        right.words.length - left.words.length ||
+        this.matchTop(left) - this.matchTop(right) ||
+        this.matchLeft(left) - this.matchLeft(right) ||
+        left.field.sortOrder - right.field.sortOrder,
+    );
+
+    const usedWords = new Set<WindowsOcrWord>();
+    const selectedMatches: FormLabelMatch[] = [];
+
+    for (const match of matches) {
+      if (match.words.some((word) => usedWords.has(word))) {
+        continue;
+      }
+
+      if (
+        selectedMatches.some(
+          (selectedMatch) =>
+            selectedMatch.field.id === match.field.id &&
+            Math.abs(this.matchAverageY(selectedMatch) - this.matchAverageY(match)) <=
+              this.formRowTolerance([selectedMatch, match]),
+        )
+      ) {
+        continue;
+      }
+
+      selectedMatches.push(match);
+
+      for (const word of match.words) {
+        usedWords.add(word);
+      }
+    }
+
+    return selectedMatches.sort(
+      (left, right) =>
+        this.matchTop(left) - this.matchTop(right) ||
+        this.matchLeft(left) - this.matchLeft(right),
+    );
+  }
+
+  private buildFormLabelCandidates(words: WindowsOcrWord[]) {
+    const rows = this.groupWordsIntoRows(words, this.rowTolerance(words));
+    const candidates: HeaderCandidate[] = [];
+
+    for (const row of rows) {
+      const sortedRow = [...row].sort((left, right) => left.x - right.x);
+
+      for (let start = 0; start < sortedRow.length; start += 1) {
+        for (
+          let length = 1;
+          length <= MAX_HEADER_SPAN_WORDS && start + length <= sortedRow.length;
+          length += 1
+        ) {
+          const span = sortedRow.slice(start, start + length);
+
+          if (!this.isCompactHeaderSpan(span)) {
+            break;
+          }
+
+          const text = this.toFormLabelCandidateText(span);
+
+          if (!text) {
+            continue;
+          }
+
+          candidates.push({
+            text,
+            x: this.spanCenterX(span),
+            words: span,
+          });
+        }
+      }
+    }
+
+    return candidates;
+  }
+
+  private groupFormLabelMatches(
+    matches: FormLabelMatch[],
+    fields: TemplateField[],
+  ) {
+    if (matches.length === 0) {
+      return [];
+    }
+
+    const sortedFields = [...fields].sort(
+      (left, right) => left.sortOrder - right.sortOrder,
+    );
+    const anchorField = sortedFields.find(
+      (field) => matches.filter((match) => match.field.id === field.id).length > 1,
+    );
+
+    if (anchorField) {
+      const anchors = matches
+        .filter((match) => match.field.id === anchorField.id)
+        .sort((left, right) => this.matchTop(left) - this.matchTop(right));
+
+      return anchors
+        .map((anchor, index) => {
+          const top = this.matchTop(anchor) - this.formRowTolerance(matches);
+          const bottom =
+            anchors[index + 1] !== undefined
+              ? this.matchTop(anchors[index + 1]) - this.formRowTolerance(matches)
+              : Number.POSITIVE_INFINITY;
+
+          return matches.filter((match) => {
+            const matchTop = this.matchTop(match);
+
+            return matchTop >= top && matchTop < bottom;
+          });
+        })
+        .filter((group) => group.length > 0);
+    }
+
+    const groupedMatches: FormLabelMatch[][] = [];
+    const yGroups = this.groupMatchesByY(matches);
+    const rowGapThreshold = this.formBreakGap(yGroups);
+    let currentGroup: FormLabelMatch[] = [];
+    let previousY = yGroups[0]?.y ?? 0;
+
+    for (const yGroup of yGroups) {
+      if (currentGroup.length > 0 && yGroup.y - previousY > rowGapThreshold) {
+        groupedMatches.push(currentGroup);
+        currentGroup = [];
+      }
+
+      currentGroup.push(...yGroup.matches);
+      previousY = yGroup.y;
+    }
+
+    if (currentGroup.length > 0) {
+      groupedMatches.push(currentGroup);
+    }
+
+    return groupedMatches;
+  }
+
+  private toFormExtractedRow(
+    matches: FormLabelMatch[],
+    words: WindowsOcrWord[],
+    fields: TemplateField[],
+    index: number,
+    input: OcrExtractionInput,
+  ): OcrExtractedRow {
+    const labelWords = new Set(matches.flatMap((match) => match.words));
+    const values = fields.map((field) => {
+      const match = this.bestFormLabelMatch(matches, field);
+      const valueWords = match
+        ? this.formValueWordsForLabel(match, matches, words, labelWords)
+        : [];
+      const rawText = this.toCellValue(valueWords);
+      const normalized = normalizeOcrCellValue(field, rawText);
+      const confidence = match
+        ? this.cellConfidence(
+            match.confidence,
+            normalized.confidence,
+            normalized.issues.length,
+          )
+        : Number(Math.min(0.5, normalized.confidence).toFixed(2));
+
+      return {
+        field,
+        rawValue: normalized.rawValue,
+        normalizedValue: normalized.normalizedValue,
+        confidence,
+        issues: normalized.issues,
+        boundingBox: this.toBoundingBox(valueWords),
+      };
+    });
+    const data = Object.fromEntries(
+      values.map((value) => [value.field.key, value.normalizedValue]),
+    ) as Record<string, OcrCellValue>;
+    const confidenceScore = values.length
+      ? values.reduce((sum, value) => sum + value.confidence, 0) / values.length
+      : 0;
+
+    return {
+      rowNumber: index + 1,
+      sourcePage: input.options?.pageStart,
+      data,
+      values,
+      confidenceScore: Number(confidenceScore.toFixed(2)),
+    };
+  }
+
+  private bestFormLabelMatch(matches: FormLabelMatch[], field: TemplateField) {
+    return matches
+      .filter((match) => match.field.id === field.id)
+      .sort(
+        (left, right) =>
+          left.score - right.score ||
+          this.matchTop(left) - this.matchTop(right) ||
+          this.matchLeft(left) - this.matchLeft(right),
+      )[0];
+  }
+
+  private formValueWordsForLabel(
+    match: FormLabelMatch,
+    matches: FormLabelMatch[],
+    words: WindowsOcrWord[],
+    labelWords: Set<WindowsOcrWord>,
+  ) {
+    const tolerance = this.formRowTolerance(matches);
+    const labelY = this.matchAverageY(match);
+    const labelRight = this.matchRight(match);
+    const nextSameRowLabel = matches
+      .filter(
+        (candidate) =>
+          candidate !== match &&
+          Math.abs(this.matchAverageY(candidate) - labelY) <= tolerance &&
+          this.matchLeft(candidate) > labelRight,
+      )
+      .sort((left, right) => this.matchLeft(left) - this.matchLeft(right))[0];
+    const rightBoundary = nextSameRowLabel
+      ? this.matchLeft(nextSameRowLabel) - 4
+      : Number.POSITIVE_INFINITY;
+    const sameRowWords = words.filter(
+      (word) =>
+        !labelWords.has(word) &&
+        this.isUsableWord(word) &&
+        Math.abs(word.y - labelY) <= tolerance &&
+        word.x >= labelRight - 2 &&
+        word.x < rightBoundary,
+    );
+
+    if (sameRowWords.length > 0) {
+      return sameRowWords.sort((left, right) => left.x - right.x);
+    }
+
+    const nextLowerLabel = matches
+      .filter(
+        (candidate) =>
+          candidate !== match &&
+          this.matchTop(candidate) > this.matchBottom(match) + tolerance,
+      )
+      .sort((left, right) => this.matchTop(left) - this.matchTop(right))[0];
+    const lowerBoundary = nextLowerLabel
+      ? this.matchTop(nextLowerLabel) - 4
+      : this.matchBottom(match) + 64;
+    const leftBoundary = this.matchLeft(match) - 4;
+
+    return words
+      .filter(
+        (word) =>
+          !labelWords.has(word) &&
+          this.isUsableWord(word) &&
+          word.y > this.matchBottom(match) &&
+          word.y < lowerBoundary &&
+          word.x >= leftBoundary,
+      )
+      .sort((left, right) => left.y - right.y || left.x - right.x);
   }
 
   private buildRows(
@@ -600,6 +953,72 @@ export class WindowsOcrProvider implements OcrProvider {
     }
 
     return rows.map((row) => row.sort((left, right) => left.x - right.x));
+  }
+
+  private toFormLabelCandidateText(words: WindowsOcrWord[]) {
+    return this.toCellValue(words)
+      .replace(/\s*[:;]\s*$/g, "")
+      .trim();
+  }
+
+  private groupMatchesByY(matches: FormLabelMatch[]) {
+    const tolerance = this.formRowTolerance(matches);
+    const groups: Array<{ y: number; matches: FormLabelMatch[] }> = [];
+
+    for (const match of matches) {
+      const y = this.matchAverageY(match);
+      const group = groups.find((candidate) => Math.abs(candidate.y - y) <= tolerance);
+
+      if (group) {
+        group.matches.push(match);
+        group.y =
+          group.matches.reduce((sum, item) => sum + this.matchAverageY(item), 0) /
+          group.matches.length;
+      } else {
+        groups.push({ y, matches: [match] });
+      }
+    }
+
+    return groups.sort((left, right) => left.y - right.y);
+  }
+
+  private formBreakGap(groups: Array<{ y: number; matches: FormLabelMatch[] }>) {
+    const gaps = groups
+      .slice(1)
+      .map((group, index) => group.y - groups[index].y)
+      .filter((gap) => gap > 0);
+
+    if (gaps.length === 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    return Math.max(72, this.median(gaps) * 2.2);
+  }
+
+  private formRowTolerance(matches: FormLabelMatch[]) {
+    const heights = matches.flatMap((match) => match.words.map((word) => word.height));
+
+    return Math.min(18, Math.max(8, this.median(heights) * 0.75));
+  }
+
+  private matchLeft(match: FormLabelMatch) {
+    return Math.min(...match.words.map((word) => word.x));
+  }
+
+  private matchRight(match: FormLabelMatch) {
+    return Math.max(...match.words.map((word) => word.x + word.width));
+  }
+
+  private matchTop(match: FormLabelMatch) {
+    return Math.min(...match.words.map((word) => word.y));
+  }
+
+  private matchBottom(match: FormLabelMatch) {
+    return Math.max(...match.words.map((word) => word.y + word.height));
+  }
+
+  private matchAverageY(match: FormLabelMatch) {
+    return this.averageY(match.words);
   }
 
   private isCompactHeaderSpan(words: WindowsOcrWord[]) {

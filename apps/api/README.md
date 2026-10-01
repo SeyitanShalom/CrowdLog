@@ -100,9 +100,29 @@ Reviewer role management is still a later phase slice.
 The API selects an OCR provider with `OCR_PROVIDER`:
 
 - `auto` uses local Windows OCR for uploaded image files on Windows, then falls
-  back to mock rows when local OCR is unavailable.
+  back to Azure Document Intelligence when configured, then the generic HTTP OCR
+  bridge when configured, then mock rows.
 - `mock` always generates mock review rows.
 - `windows` requires local Windows OCR and fails if it cannot run.
+- `azure` sends local uploaded documents to Azure Document Intelligence.
+- `http` posts a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
+
+Azure Document Intelligence configuration:
+
+```env
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT="https://your-resource.cognitiveservices.azure.com"
+AZURE_DOCUMENT_INTELLIGENCE_KEY=""
+AZURE_DOCUMENT_INTELLIGENCE_MODEL_ID="prebuilt-layout"
+AZURE_DOCUMENT_INTELLIGENCE_API_VERSION="2024-11-30"
+AZURE_DOCUMENT_INTELLIGENCE_FEATURES=""
+AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS="1000"
+AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS="60000"
+```
+
+The Azure adapter submits the uploaded document bytes to the async analyze
+endpoint, polls the operation result URL, maps layout table cells into the event
+template fields, preserves bounding boxes, and can suggest fields for unmapped
+table columns.
 
 `POST /documents/:documentId/extract` runs extraction for an uploaded document.
 OCR maps text into the fields already saved on the event template using field
