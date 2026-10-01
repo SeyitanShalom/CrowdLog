@@ -214,6 +214,162 @@ test("owners can add reviewers and receive updated member roles", async () => {
   );
 });
 
+test("adding a new reviewer queues an invitation email", async () => {
+  let eventReadCount = 0;
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => {
+        eventReadCount += 1;
+        return eventReadCount === 1
+          ? permissionEvent({ title: "Seminar Attendance" })
+          : eventResponse();
+      }),
+    },
+    user: {
+      upsert: mockFn(async (input) => ({
+        id: "user_reviewer",
+        email: input.where.email,
+        name: input.create.name,
+      })),
+      findUnique: mockFn(async () => ({
+        email: "owner@example.com",
+        name: "Owner User",
+      })),
+    },
+    eventMembership: {
+      findUnique: mockFn(async () => null),
+      create: mockFn(async (input) => ({
+        id: "member_reviewer",
+        ...input.data,
+      })),
+    },
+  };
+  const invitationEmailService = {
+    sendReviewerInvitation: mockFn(async () => ({ provider: "console" })),
+  };
+  const service = new EventsService(prisma, invitationEmailService);
+
+  await service.addReviewer(
+    "event_1",
+    {
+      email: " reviewer@example.com ",
+      name: " Reviewer ",
+    },
+    "user_owner",
+  );
+
+  assert.equal(invitationEmailService.sendReviewerInvitation.calls.length, 1);
+  assert.deepEqual(invitationEmailService.sendReviewerInvitation.calls[0][0], {
+    eventId: "event_1",
+    eventTitle: "Seminar Attendance",
+    reviewerEmail: "reviewer@example.com",
+    reviewerName: "Reviewer",
+    invitedByEmail: "owner@example.com",
+    invitedByName: "Owner User",
+  });
+});
+
+test("adding an existing reviewer does not resend an invitation email", async () => {
+  let eventReadCount = 0;
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => {
+        eventReadCount += 1;
+        return eventReadCount === 1 ? permissionEvent() : eventResponse();
+      }),
+    },
+    user: {
+      upsert: mockFn(async (input) => ({
+        id: "user_reviewer",
+        email: input.where.email,
+        name: input.create.name,
+      })),
+      findUnique: mockFn(),
+    },
+    eventMembership: {
+      findUnique: mockFn(async () => ({
+        id: "member_reviewer",
+        eventId: "event_1",
+        userId: "user_reviewer",
+        role: EventMemberRole.REVIEWER,
+      })),
+      create: mockFn(),
+    },
+  };
+  const invitationEmailService = {
+    sendReviewerInvitation: mockFn(),
+  };
+  const service = new EventsService(prisma, invitationEmailService);
+
+  await service.addReviewer(
+    "event_1",
+    { email: "reviewer@example.com" },
+    "user_owner",
+  );
+
+  assert.equal(prisma.eventMembership.create.calls.length, 0);
+  assert.equal(prisma.user.findUnique.calls.length, 0);
+  assert.equal(invitationEmailService.sendReviewerInvitation.calls.length, 0);
+});
+
+test("reviewer creation succeeds when invitation delivery fails", async () => {
+  let eventReadCount = 0;
+  const previousWarn = console.warn;
+  const warnings = [];
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => {
+        eventReadCount += 1;
+        return eventReadCount === 1 ? permissionEvent() : eventResponse();
+      }),
+    },
+    user: {
+      upsert: mockFn(async (input) => ({
+        id: "user_reviewer",
+        email: input.where.email,
+        name: input.create.name,
+      })),
+      findUnique: mockFn(async () => ({
+        email: "owner@example.com",
+        name: "Owner User",
+      })),
+    },
+    eventMembership: {
+      findUnique: mockFn(async () => null),
+      create: mockFn(async (input) => ({
+        id: "member_reviewer",
+        ...input.data,
+      })),
+    },
+  };
+  const invitationEmailService = {
+    sendReviewerInvitation: mockFn(async () => {
+      throw new Error("provider unavailable");
+    }),
+  };
+  const service = new EventsService(prisma, invitationEmailService);
+
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const response = await service.addReviewer(
+      "event_1",
+      { email: "reviewer@example.com" },
+      "user_owner",
+    );
+
+    assert.equal(prisma.eventMembership.create.calls.length, 1);
+    assert.equal(invitationEmailService.sendReviewerInvitation.calls.length, 1);
+    assert.deepEqual(
+      response.members.map((member) => member.role),
+      ["owner", "reviewer"],
+    );
+    assert.match(warnings[0][0], /Could not queue reviewer invitation/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
 test("reviewers cannot add event members", async () => {
   const prisma = {
     event: {

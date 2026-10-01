@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   FIELD_TYPES,
@@ -249,6 +250,14 @@ function shouldOpenPortfolioDemo() {
   return new URLSearchParams(window.location.search).get("portfolioDemo") === "1";
 }
 
+function requestedInviteEventId() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return new URLSearchParams(window.location.search).get("eventId")?.trim() || null;
+}
+
 function findPortfolioDemoEvent(events: CrowdLogEvent[]) {
   if (!shouldOpenPortfolioDemo()) {
     return null;
@@ -257,10 +266,27 @@ function findPortfolioDemoEvent(events: CrowdLogEvent[]) {
   return events.find((event) => event.title === PORTFOLIO_DEMO_EVENT_TITLE) ?? null;
 }
 
+function findInviteEvent(events: CrowdLogEvent[]) {
+  const eventId = requestedInviteEventId();
+
+  if (!eventId) {
+    return null;
+  }
+
+  return events.find((event) => event.id === eventId) ?? null;
+}
+
 function portfolioDemoMissingStatus(): StatusMessage {
   return {
     tone: "error",
     text: "Portfolio demo event not found. Run npm run seed:portfolio, then sign in as owner.demo@crowdlog.local.",
+  };
+}
+
+function inviteEventMissingStatus(): StatusMessage {
+  return {
+    tone: "error",
+    text: "This invited event is not available for the signed-in account.",
   };
 }
 
@@ -642,6 +668,8 @@ export function TemplateBuilder() {
               tone: "info",
               text: shouldOpenPortfolioDemo()
                 ? "Sign in to open the portfolio demo event."
+                : requestedInviteEventId()
+                  ? "Sign in with the invited email address to open this event."
                 : "Sign in to load your events.",
             });
           }
@@ -650,40 +678,51 @@ export function TemplateBuilder() {
 
         const events = await listEvents();
         const portfolioDemoEvent = findPortfolioDemoEvent(events);
+        const inviteEvent = findInviteEvent(events);
+        const requestedEvent = portfolioDemoEvent ?? inviteEvent;
 
         if (!shouldIgnore) {
           setSavedEvents(events);
           setStatus(null);
 
-          if (portfolioDemoEvent) {
-            setDraft(eventToDraft(portfolioDemoEvent));
-            setReviewEvent(portfolioDemoEvent);
+          if (requestedEvent) {
+            setDraft(eventToDraft(requestedEvent));
+            setReviewEvent(requestedEvent);
             setIsLoadingRecords(true);
             setIsLoadingDocuments(true);
             setFieldSuggestions([]);
             setReviewStatus({
               tone: "info",
-              text: "Loading portfolio demo event.",
+              text: portfolioDemoEvent
+                ? "Loading portfolio demo event."
+                : "Loading invited event.",
             });
           }
 
           if (shouldOpenPortfolioDemo() && !portfolioDemoEvent) {
             setStatus(portfolioDemoMissingStatus());
+          } else if (requestedInviteEventId() && !inviteEvent) {
+            setStatus(inviteEventMissingStatus());
           }
         }
 
-        if (portfolioDemoEvent) {
+        if (requestedEvent) {
           try {
             const [nextDocuments, nextRecords] = await Promise.all([
-              listDocuments(portfolioDemoEvent.id),
-              listRecords(portfolioDemoEvent.id),
+              listDocuments(requestedEvent.id),
+              listRecords(requestedEvent.id),
             ]);
 
             if (!shouldIgnore) {
               setDocuments(nextDocuments);
               setSelectedDocumentId(nextDocuments[0]?.id ?? "");
               setRecords(nextRecords);
-              setReviewStatus({ tone: "success", text: "Portfolio demo loaded." });
+              setReviewStatus({
+                tone: "success",
+                text: portfolioDemoEvent
+                  ? "Portfolio demo loaded."
+                  : "Invited event loaded.",
+              });
             }
           } catch {
             if (!shouldIgnore) {
@@ -779,16 +818,20 @@ export function TemplateBuilder() {
       });
       const events = await listEvents();
       const portfolioDemoEvent = findPortfolioDemoEvent(events);
+      const inviteEvent = findInviteEvent(events);
+      const requestedEvent = portfolioDemoEvent ?? inviteEvent;
 
       setCurrentUser(session.user);
       setSavedEvents(events);
       setStatus({ tone: "success", text: "Signed in." });
 
-      if (portfolioDemoEvent) {
-        setDraft(eventToDraft(portfolioDemoEvent));
-        await selectReviewEvent(portfolioDemoEvent);
+      if (requestedEvent) {
+        setDraft(eventToDraft(requestedEvent));
+        await selectReviewEvent(requestedEvent);
       } else if (shouldOpenPortfolioDemo()) {
         setStatus(portfolioDemoMissingStatus());
+      } else if (requestedInviteEventId()) {
+        setStatus(inviteEventMissingStatus());
       }
     } catch (error) {
       setStatus({
@@ -1100,7 +1143,10 @@ export function TemplateBuilder() {
 
       replaceSavedEvent(nextEvent);
       setMemberDraft({ email: "", name: "" });
-      setReviewStatus({ tone: "success", text: "Reviewer added." });
+      setReviewStatus({
+        tone: "success",
+        text: "Reviewer added and invitation queued.",
+      });
     } catch (error) {
       setReviewStatus({
         tone: "error",
@@ -2018,6 +2064,14 @@ export function TemplateBuilder() {
                           >
                             Review
                           </button>
+                          {eventRole ? (
+                            <Link
+                              href={`/events/${event.id}/team`}
+                              className="inline-flex h-9 items-center rounded-md border border-[#cbd5c8] px-3 text-sm font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
+                            >
+                              Team
+                            </Link>
+                          ) : null}
                           {isOwner ? (
                             <button
                               type="button"
@@ -2818,28 +2872,81 @@ function EventMembersPanel({
   const currentRole = eventRoleForUser(event, currentUser);
   const members = event?.members ?? [];
   const ownerCount = members.filter((member) => member.role === "owner").length;
+  const reviewerCount = members.filter(
+    (member) => member.role === "reviewer",
+  ).length;
+  const sortedMembers = [...members].sort((left, right) => {
+    if (left.role !== right.role) {
+      return left.role === "owner" ? -1 : 1;
+    }
+
+    return (left.name || left.email).localeCompare(right.name || right.email);
+  });
+  const ownerMembers = sortedMembers.filter((member) => member.role === "owner");
+  const reviewerMembers = sortedMembers.filter(
+    (member) => member.role === "reviewer",
+  );
+  const roleSections: Array<{
+    role: EventMemberRole;
+    label: string;
+    members: EventMember[];
+  }> = [
+    { role: "owner", label: "Owners", members: ownerMembers },
+    { role: "reviewer", label: "Reviewers", members: reviewerMembers },
+  ];
 
   return (
-    <div className="rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
+    <div className="scroll-mt-5 rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
-            Event team
+            Team management
           </p>
           <h3 className="mt-1 text-base font-semibold text-[#172017]">
-            Members
+            {event?.title ?? "No event selected"}
           </h3>
         </div>
-        {currentRole ? (
-          <span className="rounded-md border border-[#d8dfd2] bg-white px-2.5 py-1 text-xs font-semibold text-[#526052]">
-            {EVENT_ROLE_LABELS[currentRole]}
-          </span>
-        ) : null}
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          {currentRole ? (
+            <span className="rounded-md border border-[#d8dfd2] bg-white px-2.5 py-1 text-xs font-semibold text-[#526052]">
+              {EVENT_ROLE_LABELS[currentRole]}
+            </span>
+          ) : null}
+          {event ? (
+            <Link
+              href={`/events/${event.id}/team`}
+              className="inline-flex h-7 items-center rounded-md border border-[#cbd5c8] bg-white px-2.5 text-xs font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
+            >
+              Open team
+            </Link>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 overflow-hidden rounded-md border border-[#e1e5dc] bg-white text-center">
+        <div className="border-r border-[#e1e5dc] px-2 py-2.5">
+          <p className="text-lg font-semibold text-[#172017]">{members.length}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667265]">
+            Total
+          </p>
+        </div>
+        <div className="border-r border-[#e1e5dc] px-2 py-2.5">
+          <p className="text-lg font-semibold text-[#172017]">{ownerCount}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667265]">
+            Owners
+          </p>
+        </div>
+        <div className="px-2 py-2.5">
+          <p className="text-lg font-semibold text-[#172017]">{reviewerCount}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667265]">
+            Reviewers
+          </p>
+        </div>
       </div>
 
       {canManageEvent ? (
         <form
-          className="grid gap-2"
+          className="grid gap-2 rounded-md border border-[#e1e5dc] bg-white p-3"
           onSubmit={(submitEvent) => {
             submitEvent.preventDefault();
             onAddReviewer();
@@ -2860,7 +2967,7 @@ function EventMembersPanel({
             />
           </label>
           <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
-            Reviewer name
+            Display name
             <input
               value={memberDraft.name}
               onChange={(inputEvent) =>
@@ -2882,78 +2989,112 @@ function EventMembersPanel({
         </form>
       ) : null}
 
-      <div className="mt-4 divide-y divide-[#e5e9e2] rounded-md border border-[#e5e9e2] bg-white">
+      <div className="mt-4 grid gap-3">
         {members.length === 0 ? (
-          <div className="px-3 py-3 text-sm text-[#667265]">
+          <div className="rounded-md border border-[#e5e9e2] bg-white px-3 py-3 text-sm text-[#667265]">
             No event selected.
           </div>
         ) : (
-          members.map((member) => {
-            const isRemoving = removingMemberIds.includes(member.id);
-            const isUpdating = updatingMemberIds.includes(member.id);
-            const isCurrentUser = member.userId === currentUser?.id;
-            const canDemoteOwner = member.role === "owner" && ownerCount > 1;
-
-            return (
-              <div
-                key={member.id}
-                className="flex items-center justify-between gap-3 px-3 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-[#172017]">
-                    {member.name || member.email}
-                    {isCurrentUser ? " (you)" : ""}
-                  </p>
-                  <p className="mt-1 truncate text-xs text-[#667265]">
-                    {member.email}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1 text-xs font-semibold text-[#526052]">
-                    {EVENT_ROLE_LABELS[member.role]}
-                  </span>
-                  {canManageEvent ? (
-                    <div className="flex flex-wrap justify-end gap-2">
-                      {member.role === "reviewer" ? (
-                        <button
-                          type="button"
-                          onClick={() => onChangeMemberRole(member, "owner")}
-                          disabled={isUpdating}
-                          className="h-8 rounded-md border border-[#b8c9b2] px-2.5 text-xs font-semibold text-[#2f6f4e] transition hover:bg-[#edf3ea] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isUpdating ? "Updating" : "Make owner"}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => onChangeMemberRole(member, "reviewer")}
-                          disabled={isUpdating || !canDemoteOwner}
-                          title={
-                            canDemoteOwner
-                              ? undefined
-                              : "Add another owner before changing this role."
-                          }
-                          className="h-8 rounded-md border border-[#d8dfd2] px-2.5 text-xs font-semibold text-[#526052] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isUpdating ? "Updating" : "Make reviewer"}
-                        </button>
-                      )}
-                      {member.role === "reviewer" ? (
-                        <button
-                          type="button"
-                          onClick={() => onRemoveReviewer(member)}
-                          disabled={isRemoving || isUpdating}
-                          className="h-8 rounded-md border border-[#d9b7aa] px-2.5 text-xs font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {isRemoving ? "Removing" : "Remove"}
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+          roleSections.map((section) => (
+            <section
+              key={section.role}
+              className="overflow-hidden rounded-md border border-[#e5e9e2] bg-white"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-[#e5e9e2] bg-[#f6f8f2] px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+                  {section.label}
+                </p>
+                <span className="rounded-md border border-[#d8dfd2] bg-white px-2 py-1 text-xs font-semibold text-[#526052]">
+                  {section.members.length}
+                </span>
               </div>
-            );
-          })
+              <div className="divide-y divide-[#edf0ea]">
+                {section.members.length === 0 ? (
+                  <div className="px-3 py-3 text-sm text-[#667265]">
+                    No {section.label.toLowerCase()} yet.
+                  </div>
+                ) : (
+                  section.members.map((member) => {
+                    const isRemoving = removingMemberIds.includes(member.id);
+                    const isUpdating = updatingMemberIds.includes(member.id);
+                    const isCurrentUser = member.userId === currentUser?.id;
+                    const canDemoteOwner =
+                      member.role === "owner" && ownerCount > 1;
+                    const nextRoleDisabled =
+                      isUpdating ||
+                      (member.role === "owner" && !canDemoteOwner);
+
+                    return (
+                      <div key={member.id} className="grid gap-3 px-3 py-3">
+                        <div className="flex items-start gap-3">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-[#edf3ea] text-sm font-semibold text-[#2f6f4e]">
+                            {(member.name || member.email)
+                              .slice(0, 1)
+                              .toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-[#172017]">
+                              {member.name || member.email}
+                              {isCurrentUser ? " (you)" : ""}
+                            </p>
+                            <p className="mt-1 truncate text-xs text-[#667265]">
+                              {member.email}
+                            </p>
+                            <p className="mt-1 text-xs text-[#667265]">
+                              Joined {formatShortDateTime(member.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                          <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+                            Role
+                            <select
+                              value={member.role}
+                              disabled={!canManageEvent || nextRoleDisabled}
+                              title={
+                                member.role === "owner" && !canDemoteOwner
+                                  ? "Add another owner before changing this role."
+                                  : undefined
+                              }
+                              onChange={(selectEvent) =>
+                                onChangeMemberRole(
+                                  member,
+                                  selectEvent.target.value as EventMemberRole,
+                                )
+                              }
+                              className="h-9 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                            >
+                              <option value="owner">Owner</option>
+                              <option value="reviewer">Reviewer</option>
+                            </select>
+                          </label>
+
+                          <div className="flex flex-wrap gap-2">
+                            <span className="inline-flex h-9 items-center rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2.5 text-xs font-semibold text-[#526052]">
+                              {isUpdating
+                                ? "Updating"
+                                : EVENT_ROLE_LABELS[member.role]}
+                            </span>
+                            {canManageEvent && member.role === "reviewer" ? (
+                              <button
+                                type="button"
+                                onClick={() => onRemoveReviewer(member)}
+                                disabled={isRemoving || isUpdating}
+                                className="h-9 rounded-md border border-[#d9b7aa] px-2.5 text-xs font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isRemoving ? "Removing" : "Remove"}
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          ))
         )}
       </div>
     </div>

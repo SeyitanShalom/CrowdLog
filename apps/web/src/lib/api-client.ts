@@ -54,6 +54,10 @@ export async function listEvents() {
   return request<CrowdLogEvent[]>("/events");
 }
 
+export async function getEvent(eventId: string) {
+  return request<CrowdLogEvent>(`/events/${eventId}`);
+}
+
 export async function createEvent(payload: CreateEventPayload) {
   return request<CrowdLogEvent>("/events", {
     method: "POST",

@@ -6,7 +6,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "dev": "node --watch dist/main.js",
-    "test:api": "npm run build && node --test test/ocr-value-normalization.test.cjs test/auth-session.test.cjs test/event-role-access.test.cjs test/document-lifecycle.test.cjs test/pdf-extraction-options.test.cjs",
+    "test:api": "npm run build && node --test test/ocr-value-normalization.test.cjs test/auth-session.test.cjs test/event-role-access.test.cjs test/document-lifecycle.test.cjs test/pdf-extraction-options.test.cjs test/invitation-email.test.cjs",
     "test:ocr": "npm run build && node --test test/ocr-value-normalization.test.cjs",
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",

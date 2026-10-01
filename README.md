@@ -45,6 +45,17 @@ The current app lets a user:
 - let event owners promote reviewers to owners and demote owners back to reviewers
 - prevent role changes that would leave an event with no owner
 - show role-aware saved events and owner-only event/team/template actions
+- show a fuller team-management panel with owner/reviewer counts, grouped
+  roster sections, joined dates, role menus, and reviewer removal controls
+- open a standalone event team-management route at `/events/:eventId/team`
+- manage the same owner/reviewer roster from the standalone team route
+- queue reviewer invitation emails when owners add new reviewers
+- send invitation payloads to a generic HTTP delivery endpoint when configured
+- send reviewer invitation emails through Resend when configured
+- send reviewer invitation emails through Postmark when configured
+- send reviewer invitation emails through SendGrid when configured
+- keep reviewer creation successful if invitation delivery fails
+- open invited events from `?eventId=...` links after the reviewer signs in
 - run a mock table extraction for a saved event
 - upload PDF or image attendance sheets into local file storage
 - list uploaded documents for an event
@@ -80,9 +91,8 @@ The current app lets a user:
 - capture portfolio screenshots with a Chrome/Edge headless script
 - store the captured five-image portfolio screenshot gallery in `docs/screenshots`
 
-There is no cloud OCR, external auth provider, external invitation email flow,
-external export API, advanced analytics, or dedicated full-screen team
-management page yet.
+There is no cloud OCR, external auth provider, SMTP email adapter, external
+export API, or advanced analytics yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -187,6 +197,58 @@ packages/shared/src/template-utils.ts
     OCR fallback can emit form-entry records with field-level confidence and
     bounding boxes. Focused tests cover form-style mock output and layout
     propagation from records extraction into the OCR provider.
+18. Add fuller team-management controls. Done for the in-workspace role
+    management pass:
+    the review workspace now has a richer team-management panel with total,
+    owner, and reviewer counts; grouped owner/reviewer roster sections; joined
+    dates; role menus for owner/reviewer changes; and reviewer removal controls.
+    The existing API last-owner protection remains visible in the UI by
+    disabling the final owner's demotion menu.
+19. Add first reviewer invitation email flow. Done for the local provider pass:
+    adding a new reviewer now queues an invitation email through an
+    `InvitationEmailService`, with `console`, `file`, and `off` provider modes.
+    Invitation links include `?eventId=...`, and the frontend opens that event
+    after the invited reviewer signs in with an account that has access.
+    Focused API tests cover invitation queuing, duplicate-member no-resend
+    behavior, and invite-link email copy.
+20. Add first external invitation delivery provider. Done for the generic HTTP
+    provider pass:
+    `InvitationEmailService` now supports `INVITATION_EMAIL_PROVIDER="http"`,
+    posts a provider-neutral reviewer invitation payload to
+    `INVITATION_EMAIL_HTTP_ENDPOINT`, and can attach an optional bearer token.
+    Reviewer membership creation remains successful if invitation delivery
+    fails, with the failure logged for follow-up. Focused API tests cover HTTP
+    payload shape, required endpoint validation, and non-blocking delivery
+    failure behavior.
+21. Add first provider-specific transactional email adapter. Done for Resend:
+    `InvitationEmailService` now supports `INVITATION_EMAIL_PROVIDER="resend"`,
+    posts reviewer invitation emails to the Resend email API, supports a
+    configurable sender and optional reply-to address, and sends an idempotency
+    key for duplicate protection. Focused API tests cover the Resend request
+    body, auth header, idempotency key, provider response id, and required
+    configuration validation.
+22. Add another provider-specific transactional email adapter. Done for
+    Postmark: `InvitationEmailService` now supports
+    `INVITATION_EMAIL_PROVIDER="postmark"`, posts reviewer invitation emails to
+    the Postmark email API, supports the shared sender/reply-to settings plus an
+    optional Postmark message stream, and returns the Postmark message id when
+    available. Focused API tests cover the Postmark request body, server-token
+    header, message stream, provider response id, and required configuration
+    validation.
+23. Add SendGrid transactional email delivery. Done:
+    `InvitationEmailService` now supports
+    `INVITATION_EMAIL_PROVIDER="sendgrid"`, posts reviewer invitation emails to
+    the SendGrid Mail Send API, parses `Name <email@example.com>` sender strings
+    into SendGrid's structured address shape, supports optional reply-to, and
+    returns the SendGrid message id header when available. Focused API tests
+    cover the SendGrid request body, auth header, custom args, structured
+    sender/reply-to parsing, response id, and required configuration validation.
+24. Add a standalone team-management route. Done:
+    event members can open `/events/:eventId/team` from the saved-events list or
+    the compact in-workspace team panel. The route loads the signed-in member,
+    fetches the event by id, shows owner/reviewer counts and grouped roster
+    sections, and lets owners add reviewers, remove reviewers, promote reviewers
+    to owners, and demote owners when another owner remains.
 
 ## API Routes Implemented
 
@@ -384,6 +446,69 @@ docs/screenshots/04-reporting-panels.png
 docs/screenshots/05-export-actions.png
 ```
 
+## Invitation Emails
+
+When an event owner adds a new reviewer, the API queues reviewer invitation copy
+through `InvitationEmailService`. The reviewer is still granted access through
+the membership record immediately; the email is the notification layer.
+
+Provider selection is controlled by API environment variables:
+
+```env
+INVITATION_EMAIL_PROVIDER="console"
+CROWDLOG_APP_URL="http://localhost:3000"
+INVITATION_EMAIL_OUTBOX_DIR="invitation-outbox"
+INVITATION_EMAIL_HTTP_ENDPOINT="https://email-provider.example/send"
+INVITATION_EMAIL_HTTP_BEARER_TOKEN=""
+RESEND_API_KEY="re_xxxxxxxxx"
+POSTMARK_SERVER_TOKEN="postmark-server-token"
+SENDGRID_API_KEY="SG.xxxxxxxxx"
+INVITATION_EMAIL_FROM="CrowdLog <noreply@example.com>"
+INVITATION_EMAIL_REPLY_TO=""
+INVITATION_EMAIL_RESEND_ENDPOINT="https://api.resend.com/emails"
+INVITATION_EMAIL_POSTMARK_ENDPOINT="https://api.postmarkapp.com/email"
+INVITATION_EMAIL_POSTMARK_MESSAGE_STREAM="outbound"
+INVITATION_EMAIL_SENDGRID_ENDPOINT="https://api.sendgrid.com/v3/mail/send"
+```
+
+- `console` logs the invitation message to the API process. This is the default.
+- `file` writes JSON email payloads into `INVITATION_EMAIL_OUTBOX_DIR`.
+- `http` posts a provider-neutral JSON payload to
+  `INVITATION_EMAIL_HTTP_ENDPOINT`.
+- `resend` sends the invitation email through the Resend email API.
+- `postmark` sends the invitation email through the Postmark email API.
+- `sendgrid` sends the invitation email through the SendGrid Mail Send API.
+- `off` disables invitation delivery.
+
+`CROWDLOG_APP_URL` controls the link used in the email. If it is not set, the
+API falls back to `APP_BASE_URL`, then `http://localhost:3000`. Invitation links
+include the event id as `?eventId=...`; after sign-in, the frontend opens that
+event when the signed-in account has access.
+
+When `INVITATION_EMAIL_HTTP_BEARER_TOKEN` is set, the `http` provider sends it
+as an `Authorization: Bearer ...` header. Invitation delivery failures are
+logged and do not undo reviewer membership creation.
+
+When using `resend`, set `RESEND_API_KEY` and `INVITATION_EMAIL_FROM`.
+`INVITATION_EMAIL_REPLY_TO` is optional. `INVITATION_EMAIL_RESEND_ENDPOINT`
+defaults to `https://api.resend.com/emails` and is mainly useful for tests or
+private gateways.
+
+When using `postmark`, set `POSTMARK_SERVER_TOKEN` and
+`INVITATION_EMAIL_FROM`. `INVITATION_EMAIL_REPLY_TO` is optional.
+`INVITATION_EMAIL_POSTMARK_ENDPOINT` defaults to
+`https://api.postmarkapp.com/email`, and
+`INVITATION_EMAIL_POSTMARK_MESSAGE_STREAM` is optional when you want to target a
+specific Postmark stream such as `outbound`.
+
+When using `sendgrid`, set `SENDGRID_API_KEY` and `INVITATION_EMAIL_FROM`.
+`INVITATION_EMAIL_FROM` and `INVITATION_EMAIL_REPLY_TO` can use either a plain
+email address or `Name <email@example.com>`. `INVITATION_EMAIL_SENDGRID_ENDPOINT`
+defaults to `https://api.sendgrid.com/v3/mail/send` and is mainly useful for
+tests or private gateways.
+
+There is no SMTP adapter yet.
+
 ## OCR Providers
 
 The OCR provider boundary is now in place. Extraction runs through
@@ -430,10 +555,12 @@ a new template field and re-extract the selected document after adding it.
 
 ## Next Phase
 
-Continue role-management polish or start the next OCR/document depth pass.
+The invitation provider pass and standalone team-management route are complete
+for the current app shape. SMTP can stay as an optional backlog item unless a
+deployment specifically needs it.
 
-1. Add external reviewer invitation emails or a fuller team-management page.
-2. Add real PDF page rendering/OCR or real form-layout OCR parsing.
+1. Add real PDF page rendering/OCR beyond the current page-aware mock fallback.
+2. Add real form-layout OCR parsing beyond the current form-style mock fallback.
 
 ## Still Left To Build
 
@@ -441,7 +568,8 @@ Continue role-management polish or start the next OCR/document depth pass.
 - Real form-layout OCR parsing beyond the current form-style mock fallback.
 - Real PDF page rendering/OCR beyond the current page-aware mock fallback.
 - Editing existing events/templates instead of only creating new ones.
-- External reviewer invitation emails and a dedicated team-management page.
+- SMTP transactional email delivery beyond the current
+  console/file/http/Resend/Postmark/SendGrid invitation providers.
 - Advanced analytics and reporting dashboards.
 - Broader automated tests.
 - Breaking the large frontend component into smaller components.
@@ -498,10 +626,29 @@ Already done:
 - Event responses include owner/reviewer memberships
 - Owners can add and remove reviewers from the review workspace
 - Owners can promote reviewers to owners and demote owners when another owner remains
+- Review workspace has a fuller team-management panel with role counts,
+  grouped owner/reviewer sections, joined dates, role menus, and reviewer
+  removal controls
+- Standalone team management lives at `/events/:eventId/team`, with member
+  sign-in, role counts, grouped roster sections, owner-only add/remove controls,
+  promotion/demotion controls, and links back to the review workspace
+- Adding a new reviewer queues invitation email copy through a
+  console/file/http/Resend/Postmark/SendGrid/off provider boundary
+- The HTTP invitation provider posts a provider-neutral JSON payload to an
+  external delivery endpoint and supports an optional bearer token
+- The Resend invitation provider sends real reviewer invitation emails through
+  the Resend email API with an idempotency key
+- The Postmark invitation provider sends real reviewer invitation emails
+  through the Postmark email API with optional message-stream routing
+- The SendGrid invitation provider sends real reviewer invitation emails
+  through the SendGrid Mail Send API with structured sender parsing
+- Reviewer membership creation remains successful if invitation delivery fails
+- Invitation links include `?eventId=...`, and the frontend opens invited events
+  after sign-in when the account has access
 - Owners manage reviewers, event deletion, templates, and suggested OCR fields
 - Reviewers can access the event workspace and review extracted rows
 - Approved/rejected rows track the reviewer and reviewed time for reporting
-- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, form-style extraction options, and OCR normalization
+- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, form-style extraction options, and OCR normalization
 - Run the focused API suite with `npm run test:api`
 - Review workspace has client-side search, status filters, summary counts, reporting panels, visible-row CSV export, and server-side full-event CSV/Excel export
 - Portfolio case study and screenshot guide live in `docs/`
@@ -510,7 +657,7 @@ Already done:
 - The five captured portfolio screenshots are stored in `docs/screenshots`
 
 Current next phase:
-Continue role-management polish with external invitations or a fuller team-management page, or continue the OCR/document depth pass with real PDF rendering/OCR or real form-layout OCR parsing.
+The invitation provider pass and standalone team-management route are complete for now. Continue with the OCR/document depth pass: real PDF rendering/OCR or real form-layout OCR parsing. SMTP remains an optional backlog adapter only if a deployment needs it.
 
-Please inspect the repo first, avoid reading .env secrets, then continue from the role-management polish or OCR/document depth phase.
+Please inspect the repo first, avoid reading .env secrets, then continue from the OCR/document depth phase.
 ```

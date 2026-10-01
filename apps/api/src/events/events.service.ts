@@ -3,10 +3,12 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { EventMemberRole, Prisma } from "@prisma/client";
 import { unlink } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { InvitationEmailService } from "../invitations/invitation-email.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
@@ -23,7 +25,11 @@ import { toPrismaFieldType } from "./field-type.mapper";
 
 @Injectable()
 export class EventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly invitationEmailService?: InvitationEmailService,
+  ) {}
 
   async listEvents(userId: string) {
     const events = await this.prisma.event.findMany({
@@ -166,6 +172,14 @@ export class EventsService {
           userId: reviewer.id,
           role: EventMemberRole.REVIEWER,
         },
+      });
+
+      await this.sendReviewerInvitation({
+        eventId,
+        eventTitle: event.title,
+        reviewerEmail: reviewer.email,
+        reviewerName: reviewer.name,
+        invitedByUserId: userId,
       });
     }
 
@@ -396,6 +410,45 @@ export class EventsService {
     await unlink(resolve(process.cwd(), "uploads", fileName)).catch(() => {
       // The database delete is the source of truth; missing local files are harmless.
     });
+  }
+
+  private async sendReviewerInvitation({
+    eventId,
+    eventTitle,
+    reviewerEmail,
+    reviewerName,
+    invitedByUserId,
+  }: {
+    eventId: string;
+    eventTitle: string;
+    reviewerEmail: string;
+    reviewerName: string | null;
+    invitedByUserId: string;
+  }) {
+    if (!this.invitationEmailService) {
+      return;
+    }
+
+    try {
+      const inviter = await this.prisma.user.findUnique({
+        where: { id: invitedByUserId },
+        select: {
+          email: true,
+          name: true,
+        },
+      });
+
+      await this.invitationEmailService.sendReviewerInvitation({
+        eventId,
+        eventTitle,
+        reviewerEmail,
+        reviewerName,
+        invitedByEmail: inviter?.email ?? null,
+        invitedByName: inviter?.name ?? null,
+      });
+    } catch (error) {
+      console.warn("Could not queue reviewer invitation.", error);
+    }
   }
 }
 
