@@ -10,6 +10,7 @@ export function toPrismaFieldType(type: ApiFieldType) {
     signature: TemplateFieldType.SIGNATURE,
     date: TemplateFieldType.DATE,
     select: TemplateFieldType.SELECT,
+    multi_select: TemplateFieldType.MULTI_SELECT,
   };
 
   return fieldTypes[type];

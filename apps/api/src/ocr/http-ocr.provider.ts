@@ -46,6 +46,14 @@ type HttpOcrCell = {
 export class HttpOcrProvider implements OcrProvider {
   readonly name = "http-ocr";
 
+  canReadPdfDirectly(input: OcrExtractionInput) {
+    return (
+      input.document.fileType === "application/pdf" &&
+      Boolean(process.env.OCR_HTTP_ENDPOINT?.trim()) &&
+      process.env.OCR_HTTP_DIRECT_PDF === "true"
+    );
+  }
+
   async extract(input: OcrExtractionInput): Promise<OcrExtractionResult> {
     const endpoint = process.env.OCR_HTTP_ENDPOINT?.trim();
 
@@ -344,7 +352,8 @@ function suggestedFieldType(value: unknown): OcrSuggestedFieldType | null {
     value === "number" ||
     value === "signature" ||
     value === "date" ||
-    value === "select"
+    value === "select" ||
+    value === "multi_select"
     ? value
     : null;
 }

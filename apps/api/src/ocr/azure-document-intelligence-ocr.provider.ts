@@ -86,6 +86,15 @@ type TableSuggestionSource = {
 export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
   readonly name = "azure-document-intelligence";
 
+  canReadPdfDirectly(input: OcrExtractionInput) {
+    return (
+      input.document.fileType === "application/pdf" &&
+      Boolean(input.document.filePath) &&
+      Boolean(process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT?.trim()) &&
+      Boolean(process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY?.trim())
+    );
+  }
+
   async extract(input: OcrExtractionInput): Promise<OcrExtractionResult> {
     if (!input.document.filePath) {
       throw new Error(

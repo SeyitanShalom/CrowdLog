@@ -136,6 +136,42 @@ test("fuzzy-matches noisy select options", () => {
   assert.deepEqual(result.issues, []);
 });
 
+test("preserves multiple checked select options for review", () => {
+  const result = normalizeOcrCellValue(
+    field({
+      label: "Attendance",
+      key: "attendance",
+      type: "SELECT",
+      required: true,
+      options: ["Present", "Absent", "Excused"],
+    }),
+    "Present, Excused",
+  );
+
+  assert.equal(result.normalizedValue, "Present, Excused");
+  assert.deepEqual(result.issues, [
+    "Multiple selected options for a single-select field.",
+  ]);
+  assert.ok(result.confidence < 0.75);
+});
+
+test("accepts multiple checked options for multi-select fields", () => {
+  const result = normalizeOcrCellValue(
+    field({
+      label: "Attendance Tags",
+      key: "attendance_tags",
+      type: "MULTI_SELECT",
+      required: true,
+      options: ["Present", "Remote", "Excused"],
+    }),
+    "Present, Remote",
+  );
+
+  assert.equal(result.normalizedValue, "Present, Remote");
+  assert.deepEqual(result.issues, []);
+  assert.ok(result.confidence >= 0.9);
+});
+
 test("flags missing required signatures", () => {
   const result = normalizeOcrCellValue(
     field({

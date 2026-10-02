@@ -201,6 +201,36 @@ test("http OCR provider posts document content and maps provider rows", async ()
   }
 });
 
+test("http OCR provider advertises direct PDF support only when enabled", () => {
+  const previousEnv = {
+    OCR_HTTP_ENDPOINT: process.env.OCR_HTTP_ENDPOINT,
+    OCR_HTTP_DIRECT_PDF: process.env.OCR_HTTP_DIRECT_PDF,
+  };
+  const provider = new HttpOcrProvider();
+  const input = extractionInput({
+    filePath: "C:/uploads/attendance.pdf",
+    fields: [],
+  });
+
+  input.document.fileName = "attendance.pdf";
+  input.document.fileType = "application/pdf";
+  input.document.fileUrl = "/uploads/attendance.pdf";
+  process.env.OCR_HTTP_ENDPOINT = "https://ocr-provider.example/extract";
+  delete process.env.OCR_HTTP_DIRECT_PDF;
+
+  try {
+    assert.equal(provider.canReadPdfDirectly(input), false);
+
+    process.env.OCR_HTTP_DIRECT_PDF = "true";
+    assert.equal(provider.canReadPdfDirectly(input), true);
+
+    input.document.fileType = "image/png";
+    assert.equal(provider.canReadPdfDirectly(input), false);
+  } finally {
+    restoreEnv(previousEnv);
+  }
+});
+
 test("configured OCR provider uses explicit http mode", async () => {
   const previousEnv = {
     OCR_PROVIDER: process.env.OCR_PROVIDER,

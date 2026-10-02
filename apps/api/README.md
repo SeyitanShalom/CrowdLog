@@ -99,9 +99,9 @@ Reviewer role management is still a later phase slice.
 
 The API selects an OCR provider with `OCR_PROVIDER`:
 
-- `auto` uses local Windows OCR for uploaded image files on Windows, then falls
-  back to Azure Document Intelligence when configured, then the generic HTTP OCR
-  bridge when configured, then mock rows.
+- `auto` uses local Windows OCR for uploaded image files on Windows, can send
+  PDFs directly to Azure or an opted-in HTTP bridge, then falls back through the
+  configured cloud providers and mock rows.
 - `mock` always generates mock review rows.
 - `windows` requires local Windows OCR and fails if it cannot run.
 - `azure` sends local uploaded documents to Azure Document Intelligence.
@@ -110,6 +110,8 @@ The API selects an OCR provider with `OCR_PROVIDER`:
 Azure Document Intelligence configuration:
 
 ```env
+OCR_PDF_RENDER_MODE="auto"
+OCR_PDF_RENDER_TIMEOUT_MS="60000"
 AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT="https://your-resource.cognitiveservices.azure.com"
 AZURE_DOCUMENT_INTELLIGENCE_KEY=""
 AZURE_DOCUMENT_INTELLIGENCE_MODEL_ID="prebuilt-layout"
@@ -124,6 +126,21 @@ endpoint, polls the operation result URL, maps layout table cells into the event
 template fields, preserves bounding boxes, and can suggest fields for unmapped
 table columns.
 
+For the generic HTTP OCR bridge, set `OCR_HTTP_DIRECT_PDF="true"` only when the
+configured endpoint can read uploaded PDFs directly and should bypass page
+rendering in `auto` mode.
+
+For PDF uploads, `OCR_PDF_RENDER_MODE="auto"` first uses provider-native PDF OCR
+when available, such as configured Azure Document Intelligence or an HTTP bridge
+with `OCR_HTTP_DIRECT_PDF="true"`. Otherwise it renders selected pages with
+`pdftoppm` when it is available. Set `OCR_PDF_RENDER_MODE="full-document"` to
+force direct PDF OCR, or `OCR_PDF_RENDER_MODE="render-pages"` to force page
+rendering. When rendering is skipped or unavailable, the API records the render
+mode, renderer, fallback reason, direct provider, page range, layout, and
+provider result in raw OCR metadata.
+`OCR_PDF_RENDER_TIMEOUT_MS` controls renderer availability checks and page
+rendering.
+
 `POST /documents/:documentId/extract` runs extraction for an uploaded document.
 OCR maps text into the fields already saved on the event template using field
 keys, labels, saved aliases, and common attendance header variants. Extracted
@@ -137,6 +154,21 @@ the affected cell.
 
 Columns that do not exist as template fields may be returned as `suggestedFields`
 so the frontend can add them to the template before re-extracting the document.
+
+For `layout: "form"` extraction, Windows OCR can parse label/value layouts,
+keep wrapped multiline values in reading order, split repeated form entries, and
+use nearby left-side checkbox marks such as `X` for signature fields when a form
+uses checkbox-style signing. For saved `select` fields with configured options,
+checked option groups such as `X Present` can map the selected option into the
+review value without including unchecked options. When multiple options are
+checked for a saved select field, Windows OCR preserves the checked option
+labels as a comma-separated value and adds issue text for review because the
+template field is still single-select. For saved `multi_select` fields, the
+same checkbox-group extraction is valid and does not add the single-select issue
+text. Signature fields can also use simple stroke-like marks found in the
+signature region as signed values while preserving the mark bounding box. Split
+stroke clusters, such as an angled slash plus a short baseline, can also count
+as signed values; plain blank signature lines remain unsigned.
 
 Example body:
 

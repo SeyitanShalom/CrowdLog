@@ -49,6 +49,7 @@ type TemplateWithFields = {
   name: string;
   fields: TemplateField[];
 };
+type PdfRenderMode = "auto" | "render-pages" | "full-document";
 type ExportRecordWithDocument = Prisma.AttendanceRecordGetPayload<{
   include: {
     document: true;
@@ -685,12 +686,59 @@ export class RecordsService {
       filePath: this.toUploadedFilePath(document.fileUrl),
     };
 
-    if (document.fileType !== "application/pdf" || !this.pdfPageRenderer) {
+    if (document.fileType !== "application/pdf") {
       return this.ocrProvider.extract({
         document: documentInput,
         template,
         options,
       });
+    }
+
+    const renderMode = this.pdfRenderMode();
+
+    if (renderMode === "full-document") {
+      return this.extractFullPdfDocument(
+        documentInput,
+        template,
+        options,
+        "OCR_PDF_RENDER_MODE is set to full-document.",
+        renderMode,
+      );
+    }
+
+    if (
+      renderMode === "auto" &&
+      this.canProviderReadPdfDirectly(documentInput, template, options)
+    ) {
+      return this.extractFullPdfDocument(
+        documentInput,
+        template,
+        options,
+        "Configured OCR provider can read PDF documents directly.",
+        renderMode,
+      );
+    }
+
+    if (!this.pdfPageRenderer) {
+      return this.extractFullPdfDocument(
+        documentInput,
+        template,
+        options,
+        "No PDF page renderer is registered.",
+        renderMode,
+      );
+    }
+
+    const availability = await this.pdfRendererAvailability();
+
+    if (!availability.available) {
+      return this.extractFullPdfDocument(
+        documentInput,
+        template,
+        options,
+        availability.reason ?? "PDF renderer is not available.",
+        renderMode,
+      );
     }
 
     const renderResult = await this.pdfPageRenderer.renderPages({
@@ -701,11 +749,13 @@ export class RecordsService {
     });
 
     if (!renderResult.rendered) {
-      return this.ocrProvider.extract({
-        document: documentInput,
+      return this.extractFullPdfDocument(
+        documentInput,
         template,
         options,
-      });
+        renderResult.reason,
+        renderMode,
+      );
     }
 
     try {
@@ -718,6 +768,109 @@ export class RecordsService {
     } finally {
       await this.pdfPageRenderer.cleanupRenderedPages(renderResult.pages);
     }
+  }
+
+  private async extractFullPdfDocument(
+    document: {
+      id: string;
+      eventId: string;
+      fileName: string;
+      fileType: string | null;
+      fileUrl: string;
+      filePath: string | undefined;
+    },
+    template: TemplateWithFields,
+    options: OcrExtractionOptions,
+    reason: string,
+    renderMode: PdfRenderMode,
+  ): Promise<OcrExtractionResult> {
+    const result = await this.ocrProvider.extract({
+      document,
+      template,
+      options,
+    });
+
+    return {
+      ...result,
+      rawOcrJson: {
+        provider: "pdf-full-document",
+        document: {
+          id: document.id,
+          fileName: document.fileName,
+          fileType: document.fileType,
+          fileUrl: document.fileUrl,
+        },
+        pages: {
+          start: options.pageStart ?? 1,
+          count: options.pageCount ?? 1,
+          total: options.totalPages ?? options.pageCount ?? 1,
+        },
+        layout: options.layout ?? "table",
+        pdfHandling: {
+          renderMode,
+          renderer: "pdftoppm",
+          renderedPages: false,
+          reason,
+          directProvider: result.providerName,
+        },
+        providerResult: {
+          provider: result.providerName,
+          rawOcrJson: result.rawOcrJson,
+        },
+      } as Prisma.InputJsonObject,
+    };
+  }
+
+  private async pdfRendererAvailability() {
+    const renderer = this.pdfPageRenderer as
+      | (PdfPageRenderer & {
+          isAvailable?: () => Promise<{ available: boolean; reason?: string }>;
+        })
+      | undefined;
+
+    if (!renderer?.isAvailable) {
+      return { available: true };
+    }
+
+    const result = await renderer.isAvailable();
+
+    return result.available
+      ? { available: true }
+      : {
+          available: false,
+          reason: result.reason ?? "PDF renderer is not available.",
+        };
+  }
+
+  private canProviderReadPdfDirectly(
+    document: {
+      id: string;
+      eventId: string;
+      fileName: string;
+      fileType: string | null;
+      fileUrl: string;
+      filePath: string | undefined;
+    },
+    template: TemplateWithFields,
+    options: OcrExtractionOptions,
+  ) {
+    return (
+      this.ocrProvider.canReadPdfDirectly?.({
+        document,
+        template,
+        options,
+      }) ?? false
+    );
+  }
+
+  private pdfRenderMode(): PdfRenderMode {
+    const value = process.env.OCR_PDF_RENDER_MODE?.trim().toLowerCase();
+
+    if (value === "render-pages" || value === "full-document") {
+      return value;
+    }
+
+    return "auto";
   }
 
   private async extractRenderedPdfPages(

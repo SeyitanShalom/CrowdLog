@@ -142,6 +142,8 @@ export function normalizeOcrCellValue(
       return normalizeDateValue(field, rawText);
     case "SELECT":
       return normalizeSelectValue(field, rawText);
+    case "MULTI_SELECT":
+      return normalizeMultiSelectValue(field, rawText);
     case "SIGNATURE":
       return normalizeSignatureValue(field, rawText);
     case "TEXT":
@@ -322,6 +324,17 @@ function normalizeSelectValue(
     };
   }
 
+  const multipleOptionMatch = findMultipleSelectOptions(rawText, options);
+
+  if (multipleOptionMatch) {
+    return withRequiredIssue(field, {
+      rawValue: rawText,
+      normalizedValue: multipleOptionMatch.options.join(", "),
+      confidence: multipleOptionMatch.confidence,
+      issues: ["Multiple selected options for a single-select field."],
+    });
+  }
+
   const optionMatch = findSelectOption(rawText, options);
 
   if (optionMatch) {
@@ -341,6 +354,43 @@ function normalizeSelectValue(
   });
 }
 
+function normalizeMultiSelectValue(
+  field: TemplateField,
+  rawText: string,
+): OcrValueNormalizationResult {
+  const options = jsonStringArray(field.options).map(cleanOcrText).filter(Boolean);
+
+  if (options.length === 0) {
+    return {
+      rawValue: rawText,
+      normalizedValue: rawText,
+      confidence: 0.78,
+      issues: [],
+    };
+  }
+
+  const optionListMatch = findSelectOptionList(rawText, options, {
+    minimumOptions: 1,
+    confidenceCap: 0.9,
+  });
+
+  if (optionListMatch) {
+    return {
+      rawValue: rawText,
+      normalizedValue: optionListMatch.options.join(", "),
+      confidence: optionListMatch.confidence,
+      issues: [],
+    };
+  }
+
+  return withRequiredIssue(field, {
+    rawValue: rawText,
+    normalizedValue: rawText,
+    confidence: 0.46,
+    issues: ["One or more values do not match the field options."],
+  });
+}
+
 function normalizeSignatureValue(
   field: TemplateField,
   rawText: string,
@@ -357,6 +407,7 @@ function normalizeSignatureValue(
     "signed",
     "present",
     "signature",
+    "signaturemark",
   ]);
   const falseyTerms = new Set(["no", "n", "absent", "unsigned", "missing"]);
 
@@ -501,6 +552,61 @@ function findSelectOption(value: string, options: string[]) {
   }
 
   return bestMatch;
+}
+
+function findMultipleSelectOptions(value: string, options: string[]) {
+  return findSelectOptionList(value, options, {
+    minimumOptions: 2,
+    confidenceCap: 0.68,
+  });
+}
+
+function findSelectOptionList(
+  value: string,
+  options: string[],
+  {
+    minimumOptions,
+    confidenceCap,
+  }: {
+    minimumOptions: number;
+    confidenceCap: number;
+  },
+) {
+  const parts = cleanOcrText(value)
+    .split(/\s*(?:,|;|\band\b)\s*/i)
+    .map(cleanOcrText)
+    .filter(Boolean);
+
+  if (parts.length < minimumOptions) {
+    return null;
+  }
+
+  const matches = parts.map((part) => findSelectOption(part, options));
+
+  if (matches.some((match) => !match)) {
+    return null;
+  }
+
+  const selectedOptions: string[] = [];
+  const confidences: number[] = [];
+
+  for (const match of matches) {
+    if (!match || selectedOptions.includes(match.option)) {
+      continue;
+    }
+
+    selectedOptions.push(match.option);
+    confidences.push(match.confidence);
+  }
+
+  if (selectedOptions.length < minimumOptions) {
+    return null;
+  }
+
+  return {
+    options: selectedOptions,
+    confidence: Number(Math.min(confidenceCap, Math.min(...confidences)).toFixed(2)),
+  };
 }
 
 function expandYear(value: string | number) {

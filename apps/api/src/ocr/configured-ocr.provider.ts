@@ -22,6 +22,36 @@ export class ConfiguredOcrProvider implements OcrProvider {
     private readonly azureOcrProvider?: AzureDocumentIntelligenceOcrProvider,
   ) {}
 
+  canReadPdfDirectly(input: OcrExtractionInput) {
+    if (input.document.fileType !== "application/pdf") {
+      return false;
+    }
+
+    const mode = this.providerMode();
+
+    if (mode === "azure") {
+      return this.azureOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (mode === "http") {
+      return this.httpOcrProvider.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (mode !== "auto") {
+      return false;
+    }
+
+    if (this.canUseAzureOcr(input)) {
+      return this.azureOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (this.canUseHttpOcr()) {
+      return this.httpOcrProvider.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    return false;
+  }
+
   async extract(input: OcrExtractionInput): Promise<OcrExtractionResult> {
     const mode = this.providerMode();
 

@@ -8,13 +8,14 @@ datasource db {
 }
 
 enum TemplateFieldType {
-  TEXT      @map("text")
-  EMAIL     @map("email")
-  PHONE     @map("phone")
-  NUMBER    @map("number")
-  SIGNATURE @map("signature")
-  DATE      @map("date")
-  SELECT    @map("select")
+  TEXT         @map("text")
+  EMAIL        @map("email")
+  PHONE        @map("phone")
+  NUMBER       @map("number")
+  SIGNATURE    @map("signature")
+  DATE         @map("date")
+  SELECT       @map("select")
+  MULTI_SELECT @map("multi_select")
 
   @@map("template_field_type")
 }

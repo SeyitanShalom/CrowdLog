@@ -35,6 +35,74 @@ function templateField() {
   };
 }
 
+function pdfExtractionFixture({ ocrProvider, renderer }) {
+  const tx = {
+    attendanceRecord: {
+      deleteMany: mockFn(async () => ({ count: 0 })),
+      createMany: mockFn(async () => ({ count: 0 })),
+      findMany: mockFn(async () => []),
+    },
+    attendanceDocument: {
+      update: mockFn(async (input) => ({
+        id: "document_pdf",
+        eventId: "event_1",
+        fileName: "attendance.pdf",
+        fileType: "application/pdf",
+        fileUrl: "/uploads/attendance.pdf",
+        status: AttendanceDocumentStatus.EXTRACTED,
+        rawOcrJson: input.data.rawOcrJson,
+        createdAt: now,
+        updatedAt: now,
+        _count: { records: 0 },
+      })),
+    },
+    attendanceRecordValue: {
+      createMany: mockFn(async () => ({ count: 0 })),
+    },
+  };
+  const prisma = {
+    attendanceDocument: {
+      findUnique: mockFn(async () => ({
+        id: "document_pdf",
+        eventId: "event_1",
+        fileName: "attendance.pdf",
+        fileType: "application/pdf",
+        fileUrl: "/uploads/attendance.pdf",
+        status: AttendanceDocumentStatus.UPLOADED,
+        rawOcrJson: null,
+        createdAt: now,
+        updatedAt: now,
+        event: {
+          id: "event_1",
+          ownerId: "user_owner",
+          members: [],
+        },
+      })),
+    },
+    event: {
+      findUnique: mockFn(async () => ({
+        id: "event_1",
+        title: "Seminar",
+        ownerId: "user_owner",
+        members: [],
+        templates: [
+          {
+            id: "template_1",
+            name: "Default attendance template",
+            fields: [templateField()],
+          },
+        ],
+      })),
+    },
+    $transaction: mockFn(async (callback) => callback(tx)),
+  };
+
+  return {
+    service: new RecordsService(ocrProvider, prisma, renderer),
+    tx,
+  };
+}
+
 test("PDF document extraction clamps requested page range to detected pages", async () => {
   const uploadsDir = join(process.cwd(), "uploads");
   const fileName = "test-multipage.pdf";
@@ -356,3 +424,175 @@ test("PDF document extraction renders pages before OCR when a renderer is availa
     ],
   );
 });
+
+test("PDF document extraction can skip rendering for full-document OCR mode", async () => {
+  const previousRenderMode = process.env.OCR_PDF_RENDER_MODE;
+  const ocrProvider = {
+    extract: mockFn(async (input) => {
+      assert.equal(input.document.fileType, "application/pdf");
+      assert.equal(input.options.pageStart, 1);
+      assert.equal(input.options.pageCount, 1);
+
+      return {
+        providerName: "cloud-pdf",
+        rawOcrJson: { provider: "cloud-pdf" },
+        rows: [],
+        suggestedFields: [],
+      };
+    }),
+  };
+  const renderer = {
+    isAvailable: mockFn(async () => ({ available: true })),
+    renderPages: mockFn(async () => {
+      throw new Error("renderer should not be called");
+    }),
+    cleanupRenderedPages: mockFn(async () => null),
+  };
+  const { service, tx } = pdfExtractionFixture({ ocrProvider, renderer });
+
+  process.env.OCR_PDF_RENDER_MODE = "full-document";
+
+  try {
+    await service.extractDocument(
+      "document_pdf",
+      { rowCount: 5, pageStart: 1, pageCount: 1 },
+      "user_owner",
+    );
+
+    assert.equal(renderer.isAvailable.calls.length, 0);
+    assert.equal(renderer.renderPages.calls.length, 0);
+    assert.equal(ocrProvider.extract.calls.length, 1);
+
+    const rawOcrJson = tx.attendanceDocument.update.calls[0][0].data.rawOcrJson;
+
+    assert.equal(rawOcrJson.provider, "pdf-full-document");
+    assert.equal(rawOcrJson.pdfHandling.renderMode, "full-document");
+    assert.equal(rawOcrJson.pdfHandling.renderedPages, false);
+    assert.match(rawOcrJson.pdfHandling.reason, /full-document/);
+    assert.equal(rawOcrJson.providerResult.provider, "cloud-pdf");
+  } finally {
+    restoreEnvValue("OCR_PDF_RENDER_MODE", previousRenderMode);
+  }
+});
+
+test("PDF document extraction uses provider-native PDF OCR in auto mode when available", async () => {
+  const previousRenderMode = process.env.OCR_PDF_RENDER_MODE;
+  const ocrProvider = {
+    canReadPdfDirectly: mockFn((input) => {
+      assert.equal(input.document.fileType, "application/pdf");
+      assert.equal(input.options.pageStart, 1);
+      assert.equal(input.options.pageCount, 1);
+
+      return true;
+    }),
+    extract: mockFn(async (input) => {
+      assert.equal(input.document.fileType, "application/pdf");
+      assert.equal(input.options.totalPages, 1);
+
+      return {
+        providerName: "native-pdf-provider",
+        rawOcrJson: { provider: "native-pdf-provider" },
+        rows: [],
+        suggestedFields: [],
+      };
+    }),
+  };
+  const renderer = {
+    isAvailable: mockFn(async () => {
+      throw new Error("renderer availability should not be checked");
+    }),
+    renderPages: mockFn(async () => {
+      throw new Error("renderer should not be called");
+    }),
+    cleanupRenderedPages: mockFn(async () => null),
+  };
+  const { service, tx } = pdfExtractionFixture({ ocrProvider, renderer });
+
+  delete process.env.OCR_PDF_RENDER_MODE;
+
+  try {
+    await service.extractDocument(
+      "document_pdf",
+      { rowCount: 5, pageStart: 1, pageCount: 1 },
+      "user_owner",
+    );
+
+    assert.equal(ocrProvider.canReadPdfDirectly.calls.length, 1);
+    assert.equal(renderer.isAvailable.calls.length, 0);
+    assert.equal(renderer.renderPages.calls.length, 0);
+    assert.equal(ocrProvider.extract.calls.length, 1);
+
+    const rawOcrJson = tx.attendanceDocument.update.calls[0][0].data.rawOcrJson;
+
+    assert.equal(rawOcrJson.provider, "pdf-full-document");
+    assert.equal(rawOcrJson.pdfHandling.renderMode, "auto");
+    assert.equal(rawOcrJson.pdfHandling.renderedPages, false);
+    assert.equal(
+      rawOcrJson.pdfHandling.reason,
+      "Configured OCR provider can read PDF documents directly.",
+    );
+    assert.equal(rawOcrJson.pdfHandling.directProvider, "native-pdf-provider");
+    assert.equal(rawOcrJson.providerResult.provider, "native-pdf-provider");
+  } finally {
+    restoreEnvValue("OCR_PDF_RENDER_MODE", previousRenderMode);
+  }
+});
+
+test("PDF document extraction records renderer unavailability before direct fallback", async () => {
+  const previousRenderMode = process.env.OCR_PDF_RENDER_MODE;
+  const ocrProvider = {
+    extract: mockFn(async (input) => {
+      assert.equal(input.document.fileType, "application/pdf");
+      assert.equal(input.options.totalPages, 1);
+
+      return {
+        providerName: "fallback-pdf",
+        rawOcrJson: { provider: "fallback-pdf" },
+        rows: [],
+        suggestedFields: [],
+      };
+    }),
+  };
+  const renderer = {
+    isAvailable: mockFn(async () => ({
+      available: false,
+      reason: "pdftoppm is not installed.",
+    })),
+    renderPages: mockFn(async () => {
+      throw new Error("renderer should not be called");
+    }),
+    cleanupRenderedPages: mockFn(async () => null),
+  };
+  const { service, tx } = pdfExtractionFixture({ ocrProvider, renderer });
+
+  delete process.env.OCR_PDF_RENDER_MODE;
+
+  try {
+    await service.extractDocument(
+      "document_pdf",
+      { rowCount: 5, pageStart: 1, pageCount: 1 },
+      "user_owner",
+    );
+
+    assert.equal(renderer.isAvailable.calls.length, 1);
+    assert.equal(renderer.renderPages.calls.length, 0);
+    assert.equal(ocrProvider.extract.calls.length, 1);
+
+    const rawOcrJson = tx.attendanceDocument.update.calls[0][0].data.rawOcrJson;
+
+    assert.equal(rawOcrJson.provider, "pdf-full-document");
+    assert.equal(rawOcrJson.pdfHandling.renderMode, "auto");
+    assert.equal(rawOcrJson.pdfHandling.reason, "pdftoppm is not installed.");
+    assert.equal(rawOcrJson.providerResult.provider, "fallback-pdf");
+  } finally {
+    restoreEnvValue("OCR_PDF_RENDER_MODE", previousRenderMode);
+  }
+});
+
+function restoreEnvValue(key, value) {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}

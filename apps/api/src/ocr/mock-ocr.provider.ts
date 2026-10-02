@@ -413,6 +413,21 @@ export class MockOcrProvider implements OcrProvider {
       return options[rowIndex % options.length] ?? "Option 1";
     }
 
+    if (field.type === "MULTI_SELECT") {
+      const options = Array.isArray(field.options)
+        ? field.options.filter(
+            (option): option is string => typeof option === "string",
+          )
+        : [];
+      const firstOption = options[rowIndex % options.length] ?? "Option 1";
+      const secondOption =
+        options[(rowIndex + 1) % options.length] ?? "Option 2";
+
+      return firstOption === secondOption
+        ? firstOption
+        : `${firstOption}, ${secondOption}`;
+    }
+
     return `Value ${rowIndex + 1}`;
   }
 

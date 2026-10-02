@@ -10,6 +10,17 @@ const { ConfiguredOcrProvider } = require("../dist/ocr/configured-ocr.provider")
 
 const now = new Date("2026-10-01T00:00:00.000Z");
 
+function mockFn(implementation) {
+  const calls = [];
+  const fn = (...args) => {
+    calls.push(args);
+    return implementation?.(...args);
+  };
+
+  fn.calls = calls;
+  return fn;
+}
+
 function field(overrides) {
   return {
     id: "field_test",
@@ -309,6 +320,66 @@ test("configured OCR provider uses explicit azure mode", async () => {
 
     assert.equal(result.providerName, "azure-test");
     assert.equal(calls.length, 1);
+  } finally {
+    restoreEnv(previousEnv);
+  }
+});
+
+test("configured OCR provider reports native PDF support when auto mode can use Azure", async () => {
+  const previousEnv = {
+    OCR_PROVIDER: process.env.OCR_PROVIDER,
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+    AZURE_DOCUMENT_INTELLIGENCE_KEY:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
+  };
+  const mockProvider = {
+    canReadPdfDirectly: () => false,
+    extract: async () => {
+      throw new Error("mock provider should not be called");
+    },
+  };
+  const windowsProvider = {
+    canReadPdfDirectly: () => false,
+    extract: async () => {
+      throw new Error("windows provider should not be called");
+    },
+  };
+  const httpProvider = {
+    canReadPdfDirectly: () => false,
+    extract: async () => {
+      throw new Error("http provider should not be called");
+    },
+  };
+  const azureProvider = {
+    canReadPdfDirectly: mockFn((input) => {
+      assert.equal(input.document.fileType, "application/pdf");
+
+      return true;
+    }),
+    extract: async () => {
+      throw new Error("azure provider should not be called");
+    },
+  };
+  const provider = new ConfiguredOcrProvider(
+    mockProvider,
+    windowsProvider,
+    httpProvider,
+    azureProvider,
+  );
+  const input = extractionInput({ filePath: "C:/uploads/attendance.pdf", fields: [] });
+
+  input.document.fileName = "attendance.pdf";
+  input.document.fileType = "application/pdf";
+  input.document.fileUrl = "/uploads/attendance.pdf";
+  process.env.OCR_PROVIDER = "auto";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT =
+    "https://crowdlog-test.cognitiveservices.azure.com";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY = "azure-test-key";
+
+  try {
+    assert.equal(provider.canReadPdfDirectly(input), true);
+    assert.equal(azureProvider.canReadPdfDirectly.calls.length, 1);
   } finally {
     restoreEnv(previousEnv);
   }

@@ -186,15 +186,20 @@ export class WindowsOcrProvider implements OcrProvider {
     input: OcrExtractionInput,
   ) {
     const rowCount = input.options?.rowCount ?? 25;
-    const usableWords = words
-      .filter((word) => this.isUsableWord(word) && word.x >= 20)
+    const formWords = words
+      .filter(
+        (word) =>
+          (this.isUsableWord(word) || this.isSignatureStrokeWord(word)) &&
+          word.x >= 20,
+      )
       .sort((left, right) => left.y - right.y || left.x - right.x);
-    const labelMatches = this.findFormLabelMatches(fields, usableWords);
+    const labelWords = formWords.filter((word) => this.isUsableWord(word));
+    const labelMatches = this.findFormLabelMatches(fields, labelWords);
     const formGroups = this.groupFormLabelMatches(labelMatches, fields);
 
     return formGroups
       .map((matches, index) =>
-        this.toFormExtractedRow(matches, usableWords, fields, index, input),
+        this.toFormExtractedRow(matches, formWords, fields, index, input),
       )
       .filter((row) =>
         Object.values(row.data).some(
@@ -378,9 +383,9 @@ export class WindowsOcrProvider implements OcrProvider {
     const values = fields.map((field) => {
       const match = this.bestFormLabelMatch(matches, field);
       const valueWords = match
-        ? this.formValueWordsForLabel(match, matches, words, labelWords)
+        ? this.formValueWordsForLabel(match, matches, words, labelWords, field)
         : [];
-      const rawText = this.toCellValue(valueWords);
+      const rawText = this.toFormCellValue(field, valueWords);
       const normalized = normalizeOcrCellValue(field, rawText);
       const confidence = match
         ? this.cellConfidence(
@@ -431,6 +436,7 @@ export class WindowsOcrProvider implements OcrProvider {
     matches: FormLabelMatch[],
     words: WindowsOcrWord[],
     labelWords: Set<WindowsOcrWord>,
+    field: TemplateField,
   ) {
     const tolerance = this.formRowTolerance(matches);
     const labelY = this.matchAverageY(match);
@@ -449,15 +455,11 @@ export class WindowsOcrProvider implements OcrProvider {
     const sameRowWords = words.filter(
       (word) =>
         !labelWords.has(word) &&
-        this.isUsableWord(word) &&
+        this.isFormValueWord(word, field) &&
         Math.abs(word.y - labelY) <= tolerance &&
         word.x >= labelRight - 2 &&
         word.x < rightBoundary,
     );
-
-    if (sameRowWords.length > 0) {
-      return sameRowWords.sort((left, right) => left.x - right.x);
-    }
 
     const nextLowerLabel = matches
       .filter(
@@ -468,19 +470,73 @@ export class WindowsOcrProvider implements OcrProvider {
       .sort((left, right) => this.matchTop(left) - this.matchTop(right))[0];
     const lowerBoundary = nextLowerLabel
       ? this.matchTop(nextLowerLabel) - 4
-      : this.matchBottom(match) + 64;
+      : this.matchBottom(match) + 96;
     const leftBoundary = this.matchLeft(match) - 4;
+    const lowerValueWords = words.filter(
+      (word) =>
+        !labelWords.has(word) &&
+        this.isFormValueWord(word, field) &&
+        word.y > this.matchBottom(match) &&
+        word.y < lowerBoundary &&
+        word.x >= leftBoundary &&
+        word.x < rightBoundary,
+    );
+    const valueLeftBoundary =
+      sameRowWords.length > 0
+        ? Math.min(...sameRowWords.map((word) => word.x)) - 8
+        : leftBoundary;
+    const continuationWords = lowerValueWords.filter(
+      (word) =>
+        word.x >= valueLeftBoundary,
+    );
+    const regionWords = this.sortWordsForReading([
+      ...sameRowWords,
+      ...lowerValueWords,
+    ]);
 
-    return words
-      .filter(
-        (word) =>
-          !labelWords.has(word) &&
-          this.isUsableWord(word) &&
-          word.y > this.matchBottom(match) &&
-          word.y < lowerBoundary &&
-          word.x >= leftBoundary,
-      )
-      .sort((left, right) => left.y - right.y || left.x - right.x);
+    if (this.isOptionField(field)) {
+      const selectedOptionWords = this.formSelectedOptionWords(
+        field,
+        regionWords,
+      );
+
+      if (selectedOptionWords.length > 0) {
+        return selectedOptionWords;
+      }
+    }
+
+    if (sameRowWords.length > 0) {
+      return this.sortWordsForReading([...sameRowWords, ...continuationWords]);
+    }
+
+    if (field.type === "SIGNATURE") {
+      const checkboxWords = this.formCheckboxWordsForLabel(
+        match,
+        words,
+        labelWords,
+        tolerance,
+      );
+
+      if (checkboxWords.length > 0) {
+        return checkboxWords;
+      }
+
+      const signatureMarkWords = this.formSignatureRegionWordsForLabel(
+        match,
+        words,
+        labelWords,
+        rightBoundary,
+        lowerBoundary,
+      );
+
+      if (signatureMarkWords.length > 0) {
+        return signatureMarkWords;
+      }
+    }
+
+    return lowerValueWords.sort(
+      (left, right) => left.y - right.y || left.x - right.x,
+    );
   }
 
   private buildRows(
@@ -793,13 +849,412 @@ export class WindowsOcrProvider implements OcrProvider {
   }
 
   private toCellValue(words: WindowsOcrWord[]) {
+    const usableWords = words.filter((word) => this.isUsableWord(word));
+
+    if (usableWords.length === 0) {
+      return "";
+    }
+
     return cleanOcrText(
-      words
-        .filter((word) => this.isUsableWord(word))
-        .sort((left, right) => left.x - right.x)
-        .map((word) => word.text)
+      this.groupWordsIntoRows(
+        this.sortWordsForReading(usableWords),
+        this.rowTolerance(usableWords),
+      )
+        .map((row) => row.map((word) => word.text).join(" "))
         .join(" "),
     );
+  }
+
+  private toFormCellValue(field: TemplateField, words: WindowsOcrWord[]) {
+    if (this.isOptionField(field)) {
+      const selectText = this.toSelectFormCellValue(words);
+
+      if (selectText) {
+        return selectText;
+      }
+    }
+
+    const text = this.toCellValue(words);
+
+    if (text || field.type !== "SIGNATURE") {
+      return text;
+    }
+
+    if (
+      words.some((word) => this.isSignatureMarkWord(word)) ||
+      this.hasSignatureStrokeCluster(words)
+    ) {
+      return "signature mark";
+    }
+
+    return "";
+  }
+
+  private toSelectFormCellValue(words: WindowsOcrWord[]) {
+    const usableWords = words.filter((word) => this.isUsableWord(word));
+
+    if (usableWords.length === 0) {
+      return "";
+    }
+
+    const rows = this.groupWordsIntoRows(
+      this.sortWordsForReading(usableWords),
+      this.rowTolerance(usableWords),
+    );
+    const values = rows.map((row) =>
+      cleanOcrText(row.map((word) => word.text).join(" ")),
+    );
+
+    return cleanOcrText(values.filter(Boolean).join(", "));
+  }
+
+  private formSelectedOptionWords(
+    field: TemplateField,
+    words: WindowsOcrWord[],
+  ) {
+    const options = this.fieldOptionLabels(field);
+
+    if (options.length === 0 || words.length === 0) {
+      return [];
+    }
+
+    const rows = this.groupWordsIntoRows(
+      this.sortWordsForReading(words),
+      this.rowTolerance(words),
+    );
+    const candidates: Array<{
+      words: WindowsOcrWord[];
+      score: number;
+      distance: number;
+      optionIndex: number;
+      rowIndex: number;
+    }> = [];
+
+    for (const [rowIndex, row] of rows.entries()) {
+      const sortedRow = [...row].sort((left, right) => left.x - right.x);
+      const checkboxWords = sortedRow.filter((word) =>
+        this.isCheckboxLikeWord(word),
+      );
+
+      if (checkboxWords.length === 0) {
+        continue;
+      }
+
+      const optionWords = sortedRow.filter(
+        (word) => !this.isCheckboxLikeWord(word),
+      );
+
+      for (let start = 0; start < optionWords.length; start += 1) {
+        for (
+          let length = 1;
+          length <= MAX_HEADER_SPAN_WORDS && start + length <= optionWords.length;
+          length += 1
+        ) {
+          const span = optionWords.slice(start, start + length);
+
+          if (!this.isCompactHeaderSpan(span)) {
+            break;
+          }
+
+          const text = this.toCellValue(span);
+
+          if (!text) {
+            continue;
+          }
+
+          options.forEach((option, optionIndex) => {
+            const score = this.termMatchScore(text, [option]);
+            const distance = this.checkboxDistanceForSpan(span, checkboxWords);
+
+            if (
+              score === null ||
+              score > MAX_HEADER_MATCH_SCORE ||
+              distance === null
+            ) {
+              return;
+            }
+
+            candidates.push({
+              words: span,
+              score,
+              distance,
+              optionIndex,
+              rowIndex,
+            });
+          });
+        }
+      }
+    }
+
+    return this.selectedOptionCandidates(candidates).flatMap(
+      (candidate) => candidate.words,
+    );
+  }
+
+  private selectedOptionCandidates(
+    candidates: Array<{
+      words: WindowsOcrWord[];
+      score: number;
+      distance: number;
+      optionIndex: number;
+      rowIndex: number;
+    }>,
+  ) {
+    const selected: typeof candidates = [];
+    const usedWords = new Set<WindowsOcrWord>();
+    const usedOptions = new Set<number>();
+
+    for (const candidate of [...candidates].sort(
+      (left, right) =>
+        left.score - right.score ||
+        left.distance - right.distance ||
+        left.rowIndex - right.rowIndex ||
+        this.spanLeft(left.words) - this.spanLeft(right.words),
+    )) {
+      if (
+        usedOptions.has(candidate.optionIndex) ||
+        candidate.words.some((word) => usedWords.has(word))
+      ) {
+        continue;
+      }
+
+      selected.push(candidate);
+      usedOptions.add(candidate.optionIndex);
+
+      for (const word of candidate.words) {
+        usedWords.add(word);
+      }
+    }
+
+    return selected.sort(
+      (left, right) =>
+        left.rowIndex - right.rowIndex ||
+        this.spanLeft(left.words) - this.spanLeft(right.words),
+    );
+  }
+
+  private isOptionField(field: TemplateField) {
+    return field.type === "SELECT" || field.type === "MULTI_SELECT";
+  }
+
+  private formCheckboxWordsForLabel(
+    match: FormLabelMatch,
+    words: WindowsOcrWord[],
+    labelWords: Set<WindowsOcrWord>,
+    tolerance: number,
+  ) {
+    const labelY = this.matchAverageY(match);
+    const labelLeft = this.matchLeft(match);
+
+    return words
+      .filter(
+        (word) =>
+          !labelWords.has(word) &&
+          this.isCheckboxLikeWord(word) &&
+          Math.abs(word.y - labelY) <= tolerance &&
+          word.x + word.width <= labelLeft + 2 &&
+          labelLeft - (word.x + word.width) <= 56,
+      )
+      .sort((left, right) => left.x - right.x);
+  }
+
+  private formSignatureRegionWordsForLabel(
+    match: FormLabelMatch,
+    words: WindowsOcrWord[],
+    labelWords: Set<WindowsOcrWord>,
+    rightBoundary: number,
+    lowerBoundary: number,
+  ) {
+    const leftBoundary = this.matchLeft(match) - 4;
+    const topBoundary = this.matchBottom(match) - 2;
+    const candidates = words.filter(
+      (word) =>
+        !labelWords.has(word) &&
+        this.isSignatureStrokeWord(word) &&
+        word.y >= topBoundary &&
+        word.y < lowerBoundary &&
+        word.x >= leftBoundary &&
+        word.x < rightBoundary,
+    );
+
+    return this.firstSignatureStrokeCluster(candidates);
+  }
+
+  private isCheckboxLikeWord(word: WindowsOcrWord) {
+    const text = cleanOcrText(word.text);
+    const term = normalizeOcrTerm(word.text);
+
+    return (
+      ["x", "y", "yes", "ok", "tick", "check", "checked"].includes(term) ||
+      this.isCheckedSymbolText(text)
+    );
+  }
+
+  private isFormValueWord(word: WindowsOcrWord, field: TemplateField) {
+    return (
+      this.isUsableWord(word) ||
+      (field.type === "SIGNATURE" && this.isSignatureMarkWord(word))
+    );
+  }
+
+  private isSignatureMarkWord(word: WindowsOcrWord) {
+    const text = cleanOcrText(word.text);
+
+    if (!text || !this.isSignatureStrokeWord(word)) {
+      return false;
+    }
+
+    if (this.isCheckedSymbolText(text)) {
+      return true;
+    }
+
+    const compactText = text.replace(/\s+/g, "");
+
+    return (
+      compactText.length >= 2 &&
+      this.hasSignatureIntentStrokeText(compactText) &&
+      this.isSignatureStrokeText(compactText)
+    );
+  }
+
+  private isSignatureStrokeWord(word: WindowsOcrWord) {
+    const text = cleanOcrText(word.text);
+
+    return (
+      Boolean(text) &&
+      !this.isUsableWord(word) &&
+      (this.isCheckedSymbolText(text) ||
+        this.isSignatureStrokeText(text.replace(/\s+/g, "")))
+    );
+  }
+
+  private firstSignatureStrokeCluster(words: WindowsOcrWord[]) {
+    if (words.length === 0) {
+      return [];
+    }
+
+    const rows = this.groupWordsIntoRows(
+      this.sortWordsForReading(words),
+      this.rowTolerance(words),
+    );
+
+    for (const row of rows) {
+      const compactRows = this.compactStrokeRows(row);
+
+      for (const candidate of compactRows) {
+        if (this.hasSignatureStrokeCluster(candidate)) {
+          return candidate;
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private compactStrokeRows(words: WindowsOcrWord[]) {
+    const rows: WindowsOcrWord[][] = [];
+    let currentRow: WindowsOcrWord[] = [];
+
+    for (const word of [...words].sort((left, right) => left.x - right.x)) {
+      const previousWord = currentRow[currentRow.length - 1];
+
+      if (
+        previousWord &&
+        word.x - (previousWord.x + previousWord.width) > 24
+      ) {
+        rows.push(currentRow);
+        currentRow = [];
+      }
+
+      currentRow.push(word);
+    }
+
+    if (currentRow.length > 0) {
+      rows.push(currentRow);
+    }
+
+    return rows;
+  }
+
+  private hasSignatureStrokeCluster(words: WindowsOcrWord[]) {
+    const strokeWords = words.filter((word) => this.isSignatureStrokeWord(word));
+
+    if (
+      strokeWords.some((word) => this.isCheckedSymbolText(cleanOcrText(word.text)))
+    ) {
+      return true;
+    }
+
+    const compactText = strokeWords
+      .map((word) => cleanOcrText(word.text))
+      .join("")
+      .replace(/\s+/g, "");
+
+    if (!this.hasSignatureIntentStrokeText(compactText)) {
+      return false;
+    }
+
+    const left = Math.min(...strokeWords.map((word) => word.x));
+    const right = Math.max(...strokeWords.map((word) => word.x + word.width));
+
+    return strokeWords.length >= 2 || right - left >= 28;
+  }
+
+  private isSignatureStrokeText(text: string) {
+    return /^[\/\\~_\-.–—]+$/u.test(text);
+  }
+
+  private hasSignatureIntentStrokeText(text: string) {
+    return /[\/\\~]/.test(text);
+  }
+
+  private isCheckedSymbolText(text: string) {
+    return /[\u221a\u2611\u2713\u2714\u2717\u2718]/u.test(text);
+  }
+
+  private fieldOptionLabels(field: TemplateField) {
+    if (!Array.isArray(field.options)) {
+      return [];
+    }
+
+    return field.options
+      .filter((option): option is string => typeof option === "string")
+      .map(cleanOcrText)
+      .filter(Boolean);
+  }
+
+  private checkboxDistanceForSpan(
+    span: WindowsOcrWord[],
+    checkboxWords: WindowsOcrWord[],
+  ) {
+    const spanLeft = Math.min(...span.map((word) => word.x));
+    const spanRight = Math.max(...span.map((word) => word.x + word.width));
+    const distances = checkboxWords
+      .map((word) => {
+        const checkboxLeft = word.x;
+        const checkboxRight = word.x + word.width;
+
+        if (checkboxRight <= spanLeft) {
+          return spanLeft - checkboxRight;
+        }
+
+        if (checkboxLeft >= spanRight) {
+          return checkboxLeft - spanRight;
+        }
+
+        return 0;
+      })
+      .filter((distance) => distance <= 48);
+
+    if (distances.length === 0) {
+      return null;
+    }
+
+    return Math.min(...distances);
+  }
+
+  private sortWordsForReading(words: WindowsOcrWord[]) {
+    return [...words].sort((left, right) => left.y - right.y || left.x - right.x);
   }
 
   private nearestColumnIndex(word: WindowsOcrWord, columns: OcrColumn[]) {
@@ -822,6 +1277,10 @@ export class WindowsOcrProvider implements OcrProvider {
   }
 
   private headerMatchScore(word: string, field: TemplateField) {
+    return this.termMatchScore(word, getOcrFieldTerms(field));
+  }
+
+  private termMatchScore(word: string, terms: string[]) {
     const normalizedWords = Array.from(
       new Set([normalizeOcrTerm(word), normalizeNoisyOcrTerm(word)]),
     ).filter(Boolean);
@@ -832,13 +1291,13 @@ export class WindowsOcrProvider implements OcrProvider {
 
     let bestScore: number | null = null;
 
-    for (const term of getOcrFieldTerms(field)) {
-      const terms = Array.from(
+    for (const term of terms) {
+      const normalizedTerms = Array.from(
         new Set([normalizeOcrTerm(term), normalizeNoisyOcrTerm(term)]),
       ).filter(Boolean);
 
       for (const normalizedWord of normalizedWords) {
-        for (const normalizedTerm of terms) {
+        for (const normalizedTerm of normalizedTerms) {
           const distance = this.levenshteinDistance(
             normalizedWord,
             normalizedTerm,
@@ -1140,8 +1599,12 @@ export class WindowsOcrProvider implements OcrProvider {
     return word.x + word.width / 2;
   }
 
+  private spanLeft(words: WindowsOcrWord[]) {
+    return Math.min(...words.map((word) => word.x));
+  }
+
   private spanCenterX(words: WindowsOcrWord[]) {
-    const left = Math.min(...words.map((word) => word.x));
+    const left = this.spanLeft(words);
     const right = Math.max(...words.map((word) => word.x + word.width));
 
     return left + (right - left) / 2;

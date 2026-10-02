@@ -6,6 +6,7 @@ export const FIELD_TYPES = [
   "signature",
   "date",
   "select",
+  "multi_select",
 ] as const;
 
 export type FieldType = (typeof FIELD_TYPES)[number];

@@ -38,6 +38,7 @@ const fieldTypeMap: Record<TemplateFieldType, string> = {
   SIGNATURE: "signature",
   DATE: "date",
   SELECT: "select",
+  MULTI_SELECT: "multi_select",
 };
 
 const eventMemberRoleMap: Record<EventMemberRole, string> = {

@@ -51,7 +51,8 @@ export type OcrSuggestedFieldType =
   | "number"
   | "signature"
   | "date"
-  | "select";
+  | "select"
+  | "multi_select";
 
 export type OcrSuggestedField = {
   label: string;
@@ -78,5 +79,6 @@ export type OcrExtractionResult = {
 
 export interface OcrProvider {
   readonly name: string;
+  canReadPdfDirectly?(input: OcrExtractionInput): boolean;
   extract(input: OcrExtractionInput): Promise<OcrExtractionResult>;
 }

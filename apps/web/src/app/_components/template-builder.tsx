@@ -57,6 +57,7 @@ const FIELD_TYPE_LABELS: Record<FieldType, string> = {
   signature: "Signature",
   date: "Date",
   select: "Select",
+  multi_select: "Multi-select",
 };
 
 const RECORD_STATUS_LABELS: Record<RecordStatus, string> = {
@@ -179,6 +180,10 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Please try again.";
 }
 
+function fieldUsesOptions(type: FieldType) {
+  return type === "select" || type === "multi_select";
+}
+
 function fieldFromDraft(field: DraftField, index: number): TemplateField {
   return {
     id: field.id,
@@ -188,7 +193,7 @@ function fieldFromDraft(field: DraftField, index: number): TemplateField {
     required: field.required,
     sortOrder: index + 1,
     aliases: splitCommaList(field.aliasesText),
-    options: field.type === "select" ? splitCommaList(field.optionsText) : [],
+    options: fieldUsesOptions(field.type) ? splitCommaList(field.optionsText) : [],
   };
 }
 
@@ -1854,7 +1859,7 @@ export function TemplateBuilder() {
                         Options
                         <input
                           value={field.optionsText}
-                          disabled={field.type !== "select"}
+                          disabled={!fieldUsesOptions(field.type)}
                           onChange={(event) =>
                             updateField(field.id, (currentField) => ({
                               ...currentField,
@@ -3217,6 +3222,7 @@ function ReviewCell({
       ? "border-[#d9a443] bg-[#fff8e6] focus:border-[#b7831e] focus:ring-2 focus:ring-[#f4dda6]"
       : "border-[#cbd5c8] bg-white focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
   }`;
+  const selectedMultiValues = splitCommaList(valueToString(value));
 
   return (
     <div className="grid gap-1.5">
@@ -3251,6 +3257,48 @@ function ReviewCell({
             </option>
           ))}
         </select>
+      ) : field.type === "multi_select" && field.options.length > 0 ? (
+        <div
+          className={`grid min-w-[12rem] gap-1.5 rounded-md border px-3 py-2 text-sm ${
+            needsAttention
+              ? "border-[#d9a443] bg-[#fff8e6] text-[#2f2a1a]"
+              : "border-[#cbd5c8] bg-white text-[#334033]"
+          } ${disabled ? "cursor-not-allowed bg-[#f1f3ee] text-[#8a9588]" : ""}`}
+        >
+          {field.options.map((option) => {
+            const isChecked = selectedMultiValues.includes(option);
+
+            return (
+              <label
+                key={option}
+                className="flex min-h-6 items-center gap-2 leading-5"
+              >
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  disabled={disabled}
+                  onChange={(event) => {
+                    const nextValues = new Set(selectedMultiValues);
+
+                    if (event.target.checked) {
+                      nextValues.add(option);
+                    } else {
+                      nextValues.delete(option);
+                    }
+
+                    onChange(
+                      field.options
+                        .filter((candidate) => nextValues.has(candidate))
+                        .join(", "),
+                    );
+                  }}
+                  className="h-4 w-4 rounded border-[#aebbac] accent-[#2f6f4e]"
+                />
+                <span>{option}</span>
+              </label>
+            );
+          })}
+        </div>
       ) : (
         <input
           type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}

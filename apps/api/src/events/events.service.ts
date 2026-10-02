@@ -392,7 +392,7 @@ export class EventsService {
       required: field.required ?? false,
       sortOrder: field.sortOrder ?? index + 1,
       aliases: field.aliases ?? [],
-      options: field.type === "select" ? field.options ?? [] : [],
+      options: fieldUsesOptions(field.type) ? field.options ?? [] : [],
     };
   }
 
@@ -454,4 +454,8 @@ export class EventsService {
 
 function toPrismaEventMemberRole(role: UpdateEventMemberDto["role"]) {
   return role === "owner" ? EventMemberRole.OWNER : EventMemberRole.REVIEWER;
+}
+
+function fieldUsesOptions(type: TemplateFieldInputDto["type"]) {
+  return type === "select" || type === "multi_select";
 }

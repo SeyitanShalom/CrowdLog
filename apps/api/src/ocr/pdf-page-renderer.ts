@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const PDF_RENDER_DIRECTORY = resolve(process.cwd(), ".tmp", "pdf-pages");
+const DEFAULT_RENDER_TIMEOUT_MS = 60000;
 
 export type RenderedPdfPage = {
   pageNumber: number;
@@ -28,6 +29,25 @@ export type PdfRenderResult =
 
 @Injectable()
 export class PdfPageRenderer {
+  async isAvailable() {
+    try {
+      await execFileAsync("pdftoppm", ["-v"], {
+        timeout: this.renderTimeoutMs(),
+        windowsHide: true,
+      });
+
+      return { available: true };
+    } catch (error) {
+      return {
+        available: false,
+        reason:
+          error instanceof Error
+            ? error.message
+            : "PDF renderer availability check failed.",
+      };
+    }
+  }
+
   async renderPages({
     filePath,
     fileName,
@@ -67,6 +87,7 @@ export class PdfPageRenderer {
         ],
         {
           maxBuffer: 1024 * 1024 * 5,
+          timeout: this.renderTimeoutMs(),
           windowsHide: true,
         },
       );
@@ -128,5 +149,13 @@ export class PdfPageRenderer {
     await rm(directory, { recursive: true, force: true }).catch(() => {
       // Temporary render cleanup is best effort.
     });
+  }
+
+  private renderTimeoutMs() {
+    const value = Number(process.env.OCR_PDF_RENDER_TIMEOUT_MS);
+
+    return Number.isFinite(value) && value > 0
+      ? value
+      : DEFAULT_RENDER_TIMEOUT_MS;
   }
 }

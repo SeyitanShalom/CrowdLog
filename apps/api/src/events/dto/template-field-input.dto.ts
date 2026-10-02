@@ -20,6 +20,7 @@ const FIELD_TYPES = [
   "signature",
   "date",
   "select",
+  "multi_select",
 ] as const;
 
 export type ApiFieldType = (typeof FIELD_TYPES)[number];

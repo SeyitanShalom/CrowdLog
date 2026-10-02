@@ -188,3 +188,407 @@ test("windows OCR separates repeated form entries", async () => {
     [1, 2],
   );
 });
+
+test("windows OCR captures wrapped form values and signature checkbox marks", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_address",
+      label: "Address",
+      key: "address",
+      type: "TEXT",
+      required: true,
+      sortOrder: 2,
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+    field({
+      id: "field_signature",
+      label: "Signature",
+      key: "signature",
+      type: "SIGNATURE",
+      required: true,
+      sortOrder: 4,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Address", 32, 78, 62),
+    word("14", 160, 78, 18),
+    word("Broad", 184, 78, 48),
+    word("Street", 238, 78, 52),
+    word("Floor", 160, 108, 42),
+    word("2", 208, 108, 10),
+    word("Lagos", 224, 108, 46),
+    word("Email", 32, 146, 42),
+    word("ada@example.com", 160, 146, 126),
+    word("X", 32, 184, 12),
+    word("Signature", 60, 184, 74),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    address: "14 Broad Street Floor 2 Lagos",
+    email: "ada@example.com",
+    signature: true,
+  });
+  assert.equal(
+    result.rows[0].values.find((value) => value.field.key === "signature")
+      .rawValue,
+    "X",
+  );
+  assert.ok(
+    result.rows[0].values.find((value) => value.field.key === "address")
+      .boundingBox.height > 18,
+  );
+});
+
+test("windows OCR reads selected options from form checkbox groups", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_attendance",
+      label: "Attendance",
+      key: "attendance",
+      type: "SELECT",
+      required: true,
+      sortOrder: 2,
+      options: ["Present", "Absent", "Excused"],
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Attendance", 32, 78, 86),
+    word("X", 60, 112, 12),
+    word("Present", 84, 112, 62),
+    word("Absent", 84, 142, 54),
+    word("Excused", 84, 172, 62),
+    word("Email", 32, 216, 42),
+    word("ada@example.com", 160, 216, 126),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    attendance: "Present",
+    email: "ada@example.com",
+  });
+  assert.equal(
+    result.rows[0].values.find((value) => value.field.key === "attendance")
+      .rawValue,
+    "Present",
+  );
+});
+
+test("windows OCR preserves multiple checked select options for review", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_attendance",
+      label: "Attendance",
+      key: "attendance",
+      type: "SELECT",
+      required: true,
+      sortOrder: 2,
+      options: ["Present", "Absent", "Excused"],
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Attendance", 32, 78, 86),
+    word("X", 60, 112, 12),
+    word("Present", 84, 112, 62),
+    word("Absent", 84, 142, 54),
+    word("X", 60, 172, 12),
+    word("Excused", 84, 172, 62),
+    word("Email", 32, 216, 42),
+    word("ada@example.com", 160, 216, 126),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+  const attendanceValue = result.rows[0].values.find(
+    (value) => value.field.key === "attendance",
+  );
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    attendance: "Present, Excused",
+    email: "ada@example.com",
+  });
+  assert.equal(attendanceValue.rawValue, "Present, Excused");
+  assert.deepEqual(attendanceValue.issues, [
+    "Multiple selected options for a single-select field.",
+  ]);
+  assert.ok(attendanceValue.confidence < 0.75);
+});
+
+test("windows OCR accepts multiple checked options for multi-select fields", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_attendance_tags",
+      label: "Attendance Tags",
+      key: "attendance_tags",
+      type: "MULTI_SELECT",
+      required: true,
+      sortOrder: 2,
+      options: ["Present", "Remote", "Excused"],
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Attendance", 32, 78, 86),
+    word("Tags", 122, 78, 34),
+    word("X", 60, 112, 12),
+    word("Present", 84, 112, 62),
+    word("X", 60, 142, 12),
+    word("Remote", 84, 142, 58),
+    word("Excused", 84, 172, 62),
+    word("Email", 32, 216, 42),
+    word("ada@example.com", 160, 216, 126),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+  const attendanceTagsValue = result.rows[0].values.find(
+    (value) => value.field.key === "attendance_tags",
+  );
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    attendance_tags: "Present, Remote",
+    email: "ada@example.com",
+  });
+  assert.equal(attendanceTagsValue.rawValue, "Present, Remote");
+  assert.deepEqual(attendanceTagsValue.issues, []);
+  assert.ok(attendanceTagsValue.confidence >= 0.75);
+});
+
+test("windows OCR captures handwritten-looking signature region marks", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_signature",
+      label: "Signature",
+      key: "signature",
+      type: "SIGNATURE",
+      required: true,
+      sortOrder: 2,
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Signature", 32, 82, 74),
+    word("/\\", 164, 84, 36),
+    word("Email", 32, 126, 42),
+    word("ada@example.com", 160, 126, 126),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+  const signatureValue = result.rows[0].values.find(
+    (value) => value.field.key === "signature",
+  );
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    signature: true,
+    email: "ada@example.com",
+  });
+  assert.equal(signatureValue.rawValue, "signature mark");
+  assert.deepEqual(signatureValue.issues, []);
+  assert.ok(signatureValue.boundingBox);
+  assert.equal(signatureValue.boundingBox.x, 164);
+});
+
+test("windows OCR captures split stroke clusters in signature regions", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_signature",
+      label: "Signature",
+      key: "signature",
+      type: "SIGNATURE",
+      required: true,
+      sortOrder: 2,
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Signature", 32, 82, 74),
+    word("/", 164, 106, 8),
+    word("_", 176, 110, 28),
+    word("\\", 214, 106, 8),
+    word("Email", 32, 160, 42),
+    word("ada@example.com", 160, 160, 126),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+  const signatureValue = result.rows[0].values.find(
+    (value) => value.field.key === "signature",
+  );
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    signature: true,
+    email: "ada@example.com",
+  });
+  assert.equal(signatureValue.rawValue, "signature mark");
+  assert.deepEqual(signatureValue.issues, []);
+  assert.ok(signatureValue.boundingBox);
+  assert.equal(signatureValue.boundingBox.x, 164);
+  assert.ok(signatureValue.boundingBox.width > 50);
+});
+
+test("windows OCR does not treat a blank signature line as signed", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_signature",
+      label: "Signature",
+      key: "signature",
+      type: "SIGNATURE",
+      required: true,
+      sortOrder: 2,
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 3,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name", 32, 40, 42),
+    word("Ada", 160, 40, 28),
+    word("Okafor", 196, 40, 54),
+    word("Signature", 32, 82, 74),
+    word("________", 164, 110, 96),
+    word("Email", 32, 160, 42),
+    word("ada@example.com", 160, 160, 126),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+  const signatureValue = result.rows[0].values.find(
+    (value) => value.field.key === "signature",
+  );
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    signature: false,
+    email: "ada@example.com",
+  });
+  assert.equal(signatureValue.rawValue, "");
+  assert.deepEqual(signatureValue.issues, ["Missing required value."]);
+  assert.equal(signatureValue.boundingBox, null);
+});
