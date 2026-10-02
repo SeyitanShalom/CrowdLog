@@ -26,6 +26,7 @@ Run from the repo root:
 ```bash
 npm run build:api
 npm run test:ocr
+npm run smoke:ocr
 npm run start:api
 npm run db:validate
 npm run db:format
@@ -54,6 +55,7 @@ npm run db:migrate
 
 ```text
 GET  /health
+GET  /health/ocr
 GET  /auth/me
 POST /auth/sign-in
 POST /auth/sign-out
@@ -146,6 +148,31 @@ sanitized diagnostic raw OCR metadata with the document, requested options, page
 range, and error/cause messages. In `auto` mode, failed provider attempts are
 preserved in the configured OCR wrapper when extraction later recovers through
 another provider or mock fallback.
+
+`GET /health/ocr` is a read-only deployment check for OCR/PDF readiness. It
+reports the selected provider mode, mock fallback setting, Azure/HTTP
+configuration booleans, direct-PDF support, `pdftoppm` availability, and the
+effective PDF extraction path without exposing provider secrets or calling an
+external OCR API.
+
+For a credentialed provider smoke check, run `npm run smoke:ocr` after setting
+`OCR_SMOKE_PROVIDER` to `azure` or `http` and `OCR_SMOKE_FILE` to a local sample
+PDF or image. The script calls the selected provider directly after building the
+API and prints row counts, field coverage, confidence, issue counts, and
+suggested field metadata without printing extracted cell values.
+
+Optional smoke-check variables:
+
+```env
+OCR_SMOKE_FILE_TYPE="application/pdf"
+OCR_SMOKE_LAYOUT="table"
+OCR_SMOKE_ROW_COUNT="10"
+OCR_SMOKE_PAGE_START="1"
+OCR_SMOKE_PAGE_COUNT="1"
+OCR_SMOKE_TOTAL_PAGES=""
+OCR_SMOKE_REQUIRE_ROWS="true"
+OCR_SMOKE_FIELDS_JSON='[{"label":"Name","key":"name","type":"text","required":true}]'
+```
 
 `POST /documents/:documentId/extract` runs extraction for an uploaded document.
 OCR maps text into the fields already saved on the event template using field

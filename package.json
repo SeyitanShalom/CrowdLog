@@ -23,6 +23,7 @@
     "db:deploy": "npm run db:deploy --workspace @crowdlog/api",
     "db:studio": "npm run db:studio --workspace @crowdlog/api",
     "seed:portfolio": "npm run seed:portfolio --workspace @crowdlog/api",
+    "smoke:ocr": "npm run smoke:ocr --workspace @crowdlog/api",
     "screenshots:portfolio": "node scripts/capture-portfolio-screenshots.cjs"
   },
   "dependencies": {

@@ -3,16 +3,20 @@ import { AzureDocumentIntelligenceOcrProvider } from "./azure-document-intellige
 import { ConfiguredOcrProvider } from "./configured-ocr.provider";
 import { HttpOcrProvider } from "./http-ocr.provider";
 import { MockOcrProvider } from "./mock-ocr.provider";
+import { OcrDeploymentCheckService } from "./ocr-deployment-check.service";
+import { OcrHealthController } from "./ocr-health.controller";
 import { OCR_PROVIDER } from "./ocr-provider.interface";
 import { PdfPageRenderer } from "./pdf-page-renderer";
 import { WindowsOcrProvider } from "./windows-ocr.provider";
 
 @Module({
+  controllers: [OcrHealthController],
   providers: [
     AzureDocumentIntelligenceOcrProvider,
     ConfiguredOcrProvider,
     HttpOcrProvider,
     MockOcrProvider,
+    OcrDeploymentCheckService,
     PdfPageRenderer,
     WindowsOcrProvider,
     {
