@@ -211,11 +211,18 @@ export class RecordsService {
 
     const template = await this.getEventTemplate(document.eventId, userId);
     const extractionOptions = await this.toExtractionOptions(document, dto);
-    const extraction = await this.extractDocumentWithOptions(
-      document,
-      template,
-      extractionOptions,
-    );
+    let extraction: OcrExtractionResult;
+
+    try {
+      extraction = await this.extractDocumentWithOptions(
+        document,
+        template,
+        extractionOptions,
+      );
+    } catch (error) {
+      await this.recordExtractionFailure(document, extractionOptions, error);
+      throw error;
+    }
 
     const result = await this.prisma.$transaction(
       async (tx) => {
@@ -784,11 +791,23 @@ export class RecordsService {
     reason: string,
     renderMode: PdfRenderMode,
   ): Promise<OcrExtractionResult> {
-    const result = await this.ocrProvider.extract({
-      document,
-      template,
-      options,
-    });
+    let result: OcrExtractionResult;
+
+    try {
+      result = await this.ocrProvider.extract({
+        document,
+        template,
+        options,
+      });
+    } catch (error) {
+      throw this.fullPdfExtractionError(
+        document,
+        options,
+        reason,
+        renderMode,
+        error,
+      );
+    }
 
     return {
       ...result,
@@ -819,6 +838,133 @@ export class RecordsService {
         },
       } as Prisma.InputJsonObject,
     };
+  }
+
+  private async recordExtractionFailure(
+    document: Pick<
+      AttendanceDocument,
+      "id" | "fileName" | "fileType" | "fileUrl"
+    >,
+    options: OcrExtractionOptions,
+    error: unknown,
+  ) {
+    await this.prisma.attendanceDocument
+      .update({
+        where: { id: document.id },
+        data: {
+          status: AttendanceDocumentStatus.FAILED,
+          rawOcrJson: this.extractionFailureRawOcrJson(document, options, error),
+        },
+      })
+      .catch(() => {
+        // Keep the original extraction failure as the visible error.
+      });
+  }
+
+  private extractionFailureRawOcrJson(
+    document: Pick<
+      AttendanceDocument,
+      "id" | "fileName" | "fileType" | "fileUrl"
+    >,
+    options: OcrExtractionOptions,
+    error: unknown,
+  ) {
+    const isPdf = document.fileType === "application/pdf";
+
+    return {
+      provider: "extraction-failure",
+      document: {
+        id: document.id,
+        fileName: document.fileName,
+        fileType: document.fileType,
+        fileUrl: document.fileUrl,
+      },
+      options: {
+        rowCount: options.rowCount ?? null,
+        layout: options.layout ?? "table",
+        pageStart: options.pageStart ?? null,
+        pageCount: options.pageCount ?? null,
+        totalPages: options.totalPages ?? null,
+      },
+      ...(isPdf
+        ? {
+            pages: {
+              start: options.pageStart ?? 1,
+              count: options.pageCount ?? 1,
+              total: options.totalPages ?? options.pageCount ?? 1,
+            },
+          }
+        : {}),
+      error: this.errorDiagnostic(error),
+    } as Prisma.InputJsonObject;
+  }
+
+  private fullPdfExtractionError(
+    document: {
+      fileName: string;
+    },
+    options: OcrExtractionOptions,
+    reason: string,
+    renderMode: PdfRenderMode,
+    error: unknown,
+  ) {
+    const pageStart = options.pageStart ?? 1;
+    const pageCount = options.pageCount ?? 1;
+    const pageEnd = pageStart + pageCount - 1;
+    const message = [
+      `Full-document PDF OCR failed for "${document.fileName}"`,
+      `provider "${this.ocrProvider.name}"`,
+      `render mode "${renderMode}"`,
+      `pages ${pageStart}-${pageEnd}`,
+      `reason: ${reason}`,
+      `provider error: ${this.sanitizedErrorMessage(error)}`,
+    ].join("; ");
+
+    return new Error(message, { cause: error });
+  }
+
+  private errorDiagnostic(
+    error: unknown,
+    depth = 0,
+  ): Prisma.InputJsonObject {
+    const diagnostic: Record<string, Prisma.InputJsonValue> = {
+      name: error instanceof Error ? error.name : typeof error,
+      message: this.sanitizedErrorMessage(error),
+    };
+    const cause = error instanceof Error ? error.cause : undefined;
+
+    if (cause && depth < 2) {
+      diagnostic.cause = this.errorDiagnostic(cause, depth + 1);
+    }
+
+    return diagnostic as Prisma.InputJsonObject;
+  }
+
+  private sanitizedErrorMessage(error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Unknown extraction error.";
+
+    return this.redactSensitiveText(message.replace(/\s+/g, " ").trim()).slice(
+      0,
+      600,
+    );
+  }
+
+  private redactSensitiveText(value: string) {
+    return value
+      .replace(/(authorization:\s*bearer\s+)[^\s,;]+/gi, "$1[redacted]")
+      .replace(
+        /(ocp-apim-subscription-key["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      )
+      .replace(
+        /((?:api[_-]?key|subscription[_-]?key|token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      );
   }
 
   private async pdfRendererAvailability() {

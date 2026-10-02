@@ -70,6 +70,8 @@ The current app lets a user:
 - automatically use provider-native full-document PDF OCR in `auto` mode when
   Azure is configured or the HTTP bridge opts in
 - record PDF rendering skip or fallback reasons in raw OCR metadata
+- mark failed extraction attempts with sanitized diagnostic raw OCR metadata
+- preserve sanitized provider fallback failures when `auto` mode recovers
 - choose table-row or form-entry extraction layout for selected documents
 - run form-style mock fallback extraction into reviewed records
 - parse label/value form layouts through Windows OCR for image inputs and
@@ -370,6 +372,15 @@ packages/shared/src/template-utils.ts
     `OCR_HTTP_DIRECT_PDF="true"`. Direct-PDF raw OCR metadata records the
     provider used. Focused API tests cover auto-mode direct PDF routing, Azure
     capability detection, and HTTP opt-in behavior.
+36. Add direct-PDF failure diagnostics. Done for deployment visibility:
+    extraction failures now mark the uploaded document as `failed` and persist a
+    sanitized diagnostic raw OCR payload with document metadata, extraction
+    options, PDF page range, and error/cause messages. Full-document PDF OCR
+    errors include render mode, page range, fallback reason, and provider
+    context, while `auto` mode preserves sanitized failed provider attempts when
+    it recovers through a later provider or mock fallback. Focused API tests
+    cover failed-document metadata, redaction, and Azure-to-mock fallback
+    diagnostics.
 
 ## API Routes Implemented
 
@@ -703,6 +714,13 @@ stores the render mode, renderer, reason, direct provider, page range, layout,
 and provider result in raw OCR metadata. `OCR_PDF_RENDER_TIMEOUT_MS` controls
 both renderer availability checks and page rendering.
 
+If extraction fails, CrowdLog marks the uploaded document as `failed` and stores
+sanitized diagnostic raw OCR metadata so deployment checks can inspect the
+document, options, page range, and provider error without storing obvious bearer
+tokens or API keys. When `auto` mode recovers from a failed provider by using a
+later provider or mock fallback, the configured OCR wrapper preserves sanitized
+fallback failure messages alongside the provider result.
+
 Extraction also accepts a layout hint: `table` for attendance rows or `form`
 for form-entry sheets. The mock fallback can generate form-style extracted
 records for workflow testing, and the Windows OCR provider now has a first real
@@ -750,12 +768,13 @@ first Windows form parser, generic HTTP OCR bridge, first Azure Document
 Intelligence adapter, wrapped-value/signature-checkbox form OCR pass, first
 select checkbox-group parser, first handwritten signature-region pass, first
 production PDF hardening pass, richer multi-select checkbox preservation, true
-multi-select template fields, split-stroke signature-region pass, and
-provider-native PDF auto routing are complete for the current app shape. SMTP
-can stay as an optional backlog item unless a deployment specifically needs it.
+multi-select template fields, split-stroke signature-region pass,
+provider-native PDF auto routing, and direct-PDF failure diagnostics are
+complete for the current app shape. SMTP can stay as an optional backlog item
+unless a deployment specifically needs it.
 
-1. Continue production PDF OCR hardening, especially real deployment checks and
-   richer failure diagnostics for direct-PDF cloud providers.
+1. Continue production PDF OCR hardening with real deployment checks against
+   Azure/HTTP direct-PDF extraction and renderer availability.
 2. Add more vendor-specific OCR adapters, such as Google Document AI/Vision or
    AWS Textract, if a deployment needs them.
 3. Continue broader form-layout OCR only when real sheets expose new layout
@@ -768,8 +787,8 @@ can stay as an optional backlog item unless a deployment specifically needs it.
 - Broader form-layout OCR parsing beyond wrapped values, signature checkboxes,
   true multi-select checkbox groups, split signature stroke clusters, and simple
   signature-region marks.
-- Further production PDF OCR hardening, especially vendor-specific fallback
-  behavior.
+- Further production PDF OCR hardening, especially real deployment checks and
+  vendor-specific fallback behavior.
 - Editing existing events/templates instead of only creating new ones.
 - SMTP transactional email delivery beyond the current
   console/file/http/Resend/Postmark/SendGrid invitation providers.
@@ -819,6 +838,9 @@ Already done:
   when rendering/provider extraction is unavailable
 - PDF document extraction can skip rendering for full-document cloud OCR, checks
   renderer availability, and records render fallback reasons in raw OCR metadata
+- Failed extraction attempts mark the uploaded document as failed and persist
+  sanitized diagnostic raw OCR metadata; auto-mode provider fallback failures
+  are preserved when extraction recovers through another provider or mock rows
 - Document extraction can request table-row or form-entry layout, with form-style mock fallback rows
 - Windows OCR can parse first-pass form label/value layouts, normalize the
   extracted values by field type, include bounding boxes, and split repeated
@@ -881,7 +903,7 @@ Already done:
 - Owners manage reviewers, event deletion, templates, and suggested OCR fields
 - Reviewers can access the event workspace and review extracted rows
 - Approved/rejected rows track the reviewer and reviewed time for reporting
-- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, and OCR normalization
+- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, and OCR normalization
 - Run the focused API suite with `npm run test:api`
 - Review workspace has client-side search, status filters, summary counts, reporting panels, visible-row CSV export, and server-side full-event CSV/Excel export
 - Portfolio case study and screenshot guide live in `docs/`
@@ -890,7 +912,7 @@ Already done:
 - The five captured portfolio screenshots are stored in `docs/screenshots`
 
 Current next phase:
-The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, reviewable multi-select checkbox preservation, and true multi-select template fields are complete for now. Continue with OCR/document depth: real deployment checks, richer direct-PDF failure diagnostics, or additional vendor-specific adapters such as Google Document AI/Vision or AWS Textract if a deployment needs them. SMTP remains an optional backlog adapter only if a deployment needs it.
+The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, reviewable multi-select checkbox preservation, and true multi-select template fields are complete for now. Continue with OCR/document depth: real deployment checks against Azure/HTTP direct-PDF extraction and renderer availability, or additional vendor-specific adapters such as Google Document AI/Vision or AWS Textract if a deployment needs them. SMTP remains an optional backlog adapter only if a deployment needs it.
 
 Please inspect the repo first, avoid reading .env secrets, then continue from the OCR/document depth phase.
 ```

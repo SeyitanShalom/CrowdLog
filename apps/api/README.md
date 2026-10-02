@@ -141,6 +141,12 @@ provider result in raw OCR metadata.
 `OCR_PDF_RENDER_TIMEOUT_MS` controls renderer availability checks and page
 rendering.
 
+When extraction fails, the uploaded document is marked `failed` and receives
+sanitized diagnostic raw OCR metadata with the document, requested options, page
+range, and error/cause messages. In `auto` mode, failed provider attempts are
+preserved in the configured OCR wrapper when extraction later recovers through
+another provider or mock fallback.
+
 `POST /documents/:documentId/extract` runs extraction for an uploaded document.
 OCR maps text into the fields already saved on the event template using field
 keys, labels, saved aliases, and common attendance header variants. Extracted

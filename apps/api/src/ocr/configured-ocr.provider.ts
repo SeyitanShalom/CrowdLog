@@ -10,6 +10,10 @@ import { MockOcrProvider } from "./mock-ocr.provider";
 import { WindowsOcrProvider } from "./windows-ocr.provider";
 
 type OcrProviderMode = "auto" | "mock" | "windows" | "http" | "azure";
+type OcrFallbackFailure = {
+  provider: string;
+  message: string;
+};
 
 @Injectable()
 export class ConfiguredOcrProvider implements OcrProvider {
@@ -67,6 +71,8 @@ export class ConfiguredOcrProvider implements OcrProvider {
       return this.azureProvider().extract(input);
     }
 
+    const fallbackFailures: OcrFallbackFailure[] = [];
+
     if (this.canUseWindowsOcr(input)) {
       try {
         return await this.windowsOcrProvider.extract(input);
@@ -74,30 +80,51 @@ export class ConfiguredOcrProvider implements OcrProvider {
         if (mode === "windows" || process.env.OCR_FALLBACK_TO_MOCK === "false") {
           throw error;
         }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.windowsOcrProvider.name, error),
+        );
       }
     }
 
     if (this.canUseAzureOcr(input)) {
       try {
-        return await this.azureProvider().extract(input);
+        return this.withFallbackDiagnostics(
+          await this.azureProvider().extract(input),
+          fallbackFailures,
+        );
       } catch (error) {
         if (process.env.OCR_FALLBACK_TO_MOCK === "false") {
           throw error;
         }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.azureProvider().name, error),
+        );
       }
     }
 
     if (this.canUseHttpOcr()) {
       try {
-        return await this.httpOcrProvider.extract(input);
+        return this.withFallbackDiagnostics(
+          await this.httpOcrProvider.extract(input),
+          fallbackFailures,
+        );
       } catch (error) {
         if (process.env.OCR_FALLBACK_TO_MOCK === "false") {
           throw error;
         }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.httpOcrProvider.name, error),
+        );
       }
     }
 
-    return this.mockOcrProvider.extract(input);
+    return this.withFallbackDiagnostics(
+      await this.mockOcrProvider.extract(input),
+      fallbackFailures,
+    );
   }
 
   private providerMode(): OcrProviderMode {
@@ -147,5 +174,58 @@ export class ConfiguredOcrProvider implements OcrProvider {
     }
 
     return this.azureOcrProvider;
+  }
+
+  private withFallbackDiagnostics(
+    result: OcrExtractionResult,
+    fallbackFailures: OcrFallbackFailure[],
+  ): OcrExtractionResult {
+    if (fallbackFailures.length === 0) {
+      return result;
+    }
+
+    return {
+      ...result,
+      rawOcrJson: {
+        provider: "configured-ocr",
+        selectedProvider: result.providerName,
+        fallbackFailures,
+        providerResult: result.rawOcrJson,
+      },
+    };
+  }
+
+  private fallbackFailure(provider: string, error: unknown): OcrFallbackFailure {
+    return {
+      provider,
+      message: this.sanitizedErrorMessage(error),
+    };
+  }
+
+  private sanitizedErrorMessage(error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Unknown OCR provider error.";
+
+    return this.redactSensitiveText(message.replace(/\s+/g, " ").trim()).slice(
+      0,
+      600,
+    );
+  }
+
+  private redactSensitiveText(value: string) {
+    return value
+      .replace(/(authorization:\s*bearer\s+)[^\s,;]+/gi, "$1[redacted]")
+      .replace(
+        /(ocp-apim-subscription-key["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      )
+      .replace(
+        /((?:api[_-]?key|subscription[_-]?key|token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      );
   }
 }

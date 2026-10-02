@@ -62,6 +62,18 @@ function pdfExtractionFixture({ ocrProvider, renderer }) {
   };
   const prisma = {
     attendanceDocument: {
+      update: mockFn(async (input) => ({
+        id: "document_pdf",
+        eventId: "event_1",
+        fileName: "attendance.pdf",
+        fileType: "application/pdf",
+        fileUrl: "/uploads/attendance.pdf",
+        status: input.data.status,
+        rawOcrJson: input.data.rawOcrJson,
+        createdAt: now,
+        updatedAt: now,
+        _count: { records: 0 },
+      })),
       findUnique: mockFn(async () => ({
         id: "document_pdf",
         eventId: "event_1",
@@ -99,6 +111,7 @@ function pdfExtractionFixture({ ocrProvider, renderer }) {
 
   return {
     service: new RecordsService(ocrProvider, prisma, renderer),
+    prisma,
     tx,
   };
 }
@@ -584,6 +597,75 @@ test("PDF document extraction records renderer unavailability before direct fall
     assert.equal(rawOcrJson.pdfHandling.renderMode, "auto");
     assert.equal(rawOcrJson.pdfHandling.reason, "pdftoppm is not installed.");
     assert.equal(rawOcrJson.providerResult.provider, "fallback-pdf");
+  } finally {
+    restoreEnvValue("OCR_PDF_RENDER_MODE", previousRenderMode);
+  }
+});
+
+test("PDF document extraction marks documents failed with direct PDF diagnostics when provider extraction fails", async () => {
+  const previousRenderMode = process.env.OCR_PDF_RENDER_MODE;
+  const providerError = new Error(
+    "Azure request failed authorization: Bearer secret-token Ocp-Apim-Subscription-Key: azure-secret",
+  );
+  const ocrProvider = {
+    name: "configured",
+    extract: mockFn(async (input) => {
+      assert.equal(input.document.fileType, "application/pdf");
+
+      throw providerError;
+    }),
+  };
+  const renderer = {
+    isAvailable: mockFn(async () => {
+      throw new Error("renderer availability should not be checked");
+    }),
+    renderPages: mockFn(async () => {
+      throw new Error("renderer should not be called");
+    }),
+    cleanupRenderedPages: mockFn(async () => null),
+  };
+  const { service, prisma } = pdfExtractionFixture({ ocrProvider, renderer });
+
+  process.env.OCR_PDF_RENDER_MODE = "full-document";
+
+  try {
+    await assert.rejects(
+      () =>
+        service.extractDocument(
+          "document_pdf",
+          { rowCount: 5, pageStart: 1, pageCount: 1 },
+          "user_owner",
+        ),
+      (error) => {
+        assert.match(error.message, /Full-document PDF OCR failed/);
+        assert.match(error.message, /render mode "full-document"/);
+        assert.match(error.message, /Bearer \[redacted\]/);
+        assert.doesNotMatch(error.message, /secret-token|azure-secret/);
+
+        return true;
+      },
+    );
+
+    assert.equal(prisma.attendanceDocument.update.calls.length, 1);
+
+    const failureUpdate = prisma.attendanceDocument.update.calls[0][0];
+    const rawOcrJson = failureUpdate.data.rawOcrJson;
+
+    assert.equal(failureUpdate.data.status, AttendanceDocumentStatus.FAILED);
+    assert.equal(rawOcrJson.provider, "extraction-failure");
+    assert.deepEqual(rawOcrJson.pages, {
+      start: 1,
+      count: 1,
+      total: 1,
+    });
+    assert.match(rawOcrJson.error.message, /Full-document PDF OCR failed/);
+    assert.match(rawOcrJson.error.message, /Bearer \[redacted\]/);
+    assert.doesNotMatch(rawOcrJson.error.message, /secret-token|azure-secret/);
+    assert.match(rawOcrJson.error.cause.message, /Bearer \[redacted\]/);
+    assert.doesNotMatch(
+      rawOcrJson.error.cause.message,
+      /secret-token|azure-secret/,
+    );
   } finally {
     restoreEnvValue("OCR_PDF_RENDER_MODE", previousRenderMode);
   }

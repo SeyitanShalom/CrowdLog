@@ -385,6 +385,95 @@ test("configured OCR provider reports native PDF support when auto mode can use 
   }
 });
 
+test("configured OCR provider keeps fallback diagnostics when Azure fails in auto mode", async () => {
+  const previousEnv = {
+    OCR_PROVIDER: process.env.OCR_PROVIDER,
+    OCR_FALLBACK_TO_MOCK: process.env.OCR_FALLBACK_TO_MOCK,
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+    AZURE_DOCUMENT_INTELLIGENCE_KEY:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
+    OCR_HTTP_ENDPOINT: process.env.OCR_HTTP_ENDPOINT,
+  };
+  const mockProvider = {
+    name: "mock",
+    extract: mockFn(async () => ({
+      providerName: "mock",
+      rawOcrJson: { provider: "mock" },
+      rows: [],
+      suggestedFields: [],
+    })),
+  };
+  const windowsProvider = {
+    name: "windows-ocr",
+    extract: async () => {
+      throw new Error("windows provider should not be called");
+    },
+  };
+  const httpProvider = {
+    name: "http-ocr",
+    canReadPdfDirectly: () => false,
+    extract: async () => {
+      throw new Error("http provider should not be called");
+    },
+  };
+  const azureProvider = {
+    name: "azure-document-intelligence",
+    extract: mockFn(async () => {
+      throw new Error(
+        "Azure failed with api-key=secret-key authorization: Bearer secret-token",
+      );
+    }),
+  };
+  const provider = new ConfiguredOcrProvider(
+    mockProvider,
+    windowsProvider,
+    httpProvider,
+    azureProvider,
+  );
+  const input = extractionInput({ filePath: "C:/uploads/attendance.pdf", fields: [] });
+
+  input.document.fileName = "attendance.pdf";
+  input.document.fileType = "application/pdf";
+  input.document.fileUrl = "/uploads/attendance.pdf";
+  process.env.OCR_PROVIDER = "auto";
+  delete process.env.OCR_FALLBACK_TO_MOCK;
+  delete process.env.OCR_HTTP_ENDPOINT;
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT =
+    "https://crowdlog-test.cognitiveservices.azure.com";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY = "azure-test-key";
+
+  try {
+    const result = await provider.extract(input);
+
+    assert.equal(azureProvider.extract.calls.length, 1);
+    assert.equal(mockProvider.extract.calls.length, 1);
+    assert.equal(result.providerName, "mock");
+    assert.equal(result.rawOcrJson.provider, "configured-ocr");
+    assert.equal(result.rawOcrJson.selectedProvider, "mock");
+    assert.deepEqual(result.rawOcrJson.providerResult, { provider: "mock" });
+    assert.equal(result.rawOcrJson.fallbackFailures.length, 1);
+    assert.equal(
+      result.rawOcrJson.fallbackFailures[0].provider,
+      "azure-document-intelligence",
+    );
+    assert.match(
+      result.rawOcrJson.fallbackFailures[0].message,
+      /api-key=\[redacted\]/,
+    );
+    assert.match(
+      result.rawOcrJson.fallbackFailures[0].message,
+      /Bearer \[redacted\]/,
+    );
+    assert.doesNotMatch(
+      result.rawOcrJson.fallbackFailures[0].message,
+      /secret-key|secret-token/,
+    );
+  } finally {
+    restoreEnv(previousEnv);
+  }
+});
+
 function restoreEnv(previousEnv) {
   for (const [key, value] of Object.entries(previousEnv)) {
     if (value === undefined) {
