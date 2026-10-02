@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AzureDocumentIntelligenceOcrProvider } from "./azure-document-intelligence-ocr.provider";
 import { ConfiguredOcrProvider } from "./configured-ocr.provider";
+import { GoogleDocumentAiOcrProvider } from "./google-document-ai-ocr.provider";
 import { HttpOcrProvider } from "./http-ocr.provider";
 import { MockOcrProvider } from "./mock-ocr.provider";
 import { OcrDeploymentCheckService } from "./ocr-deployment-check.service";
@@ -14,6 +15,7 @@ import { WindowsOcrProvider } from "./windows-ocr.provider";
   providers: [
     AzureDocumentIntelligenceOcrProvider,
     ConfiguredOcrProvider,
+    GoogleDocumentAiOcrProvider,
     HttpOcrProvider,
     MockOcrProvider,
     OcrDeploymentCheckService,

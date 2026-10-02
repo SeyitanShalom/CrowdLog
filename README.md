@@ -74,8 +74,8 @@ The current app lets a user:
 - preserve sanitized provider fallback failures when `auto` mode recovers
 - expose a read-only OCR deployment check for provider, direct-PDF, and PDF
   renderer readiness
-- run a credentialed Azure/HTTP OCR smoke-check script against local sample
-  documents without printing extracted attendance values
+- run a credentialed Azure/Google/HTTP OCR smoke-check script against local
+  sample documents without printing extracted attendance values
 - choose table-row or form-entry extraction layout for selected documents
 - run form-style mock fallback extraction into reviewed records
 - parse label/value form layouts through Windows OCR for image inputs and
@@ -97,6 +97,9 @@ The current app lets a user:
 - send OCR extraction requests to Azure Document Intelligence when configured
 - map Azure layout tables into reviewed records with bounding boxes and
   suggested fields for unmapped columns
+- send OCR extraction requests to Google Document AI when configured
+- map Google Document AI tables and form fields into reviewed records with
+  bounding boxes and suggested fields for unmapped columns
 - replace uploaded attendance sheets and clear their old extracted rows
 - delete uploaded attendance sheets with their extracted rows and local files
 - suggest missing template fields from OCR-detected sheet columns
@@ -126,9 +129,8 @@ The current app lets a user:
 - capture portfolio screenshots with a Chrome/Edge headless script
 - store the captured five-image portfolio screenshot gallery in `docs/screenshots`
 
-There is no Google Document AI/Vision adapter, AWS Textract adapter, external
-auth provider, SMTP email adapter, external export API, or advanced analytics
-yet.
+There is no Google Vision adapter, AWS Textract adapter, external auth
+provider, SMTP email adapter, external export API, or advanced analytics yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -153,9 +155,9 @@ language as the frontend.
 - ORM: Prisma
 - Styling: Tailwind CSS
 - Storage: local file storage first, cloud storage later
-- OCR: local Windows OCR for image uploads, Azure Document Intelligence, generic
-  HTTP OCR endpoint, mock OCR fallback, additional vendor-specific cloud OCR
-  later
+- OCR: local Windows OCR for image uploads, Azure Document Intelligence, Google
+  Document AI, generic HTTP OCR endpoint, mock OCR fallback, additional
+  vendor-specific cloud OCR later
 
 ## Current Architecture
 
@@ -389,7 +391,7 @@ packages/shared/src/template-utils.ts
 37. Add first OCR deployment readiness check. Done for configuration smoke
     checks:
     `GET /health/ocr` now reports the selected OCR mode, mock fallback setting,
-    Azure/HTTP configuration readiness, direct-PDF support, `pdftoppm`
+    Azure/Google/HTTP configuration readiness, direct-PDF support, `pdftoppm`
     availability, and the effective PDF extraction path without exposing
     provider secrets. Focused API tests cover direct-PDF readiness, renderer
     readiness, secret redaction, and the health controller.
@@ -402,6 +404,17 @@ packages/shared/src/template-utils.ts
     issue counts, and suggested field metadata instead of extracted cell values.
     Focused tests cover smoke input construction, provider setup validation,
     file-type inference, and summary redaction.
+39. Add another vendor-specific cloud OCR adapter. Done for Google Document AI:
+    `OCR_PROVIDER="google"` now posts local uploaded document bytes to the
+    Google Document AI online processing API, maps table rows and form fields
+    back onto saved template fields, normalizes values by field type, preserves
+    normalized bounding boxes, and returns suggested fields for unmapped table
+    columns. In `auto` mode, CrowdLog can try Google Document AI after Azure
+    and before the generic HTTP bridge when Google credentials are configured.
+    The OCR readiness check and smoke-check runner now include Google
+    configuration. Focused OCR tests cover request payloads, table mapping, form
+    field mapping, direct-PDF capability, explicit provider selection, and smoke
+    runner validation.
 
 ## API Routes Implemented
 
@@ -684,6 +697,14 @@ AZURE_DOCUMENT_INTELLIGENCE_API_VERSION="2024-11-30"
 AZURE_DOCUMENT_INTELLIGENCE_FEATURES=""
 AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS="1000"
 AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS="60000"
+GOOGLE_DOCUMENT_AI_PROJECT_ID=""
+GOOGLE_DOCUMENT_AI_LOCATION="us"
+GOOGLE_DOCUMENT_AI_PROCESSOR_ID=""
+GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION=""
+GOOGLE_DOCUMENT_AI_ACCESS_TOKEN=""
+GOOGLE_DOCUMENT_AI_ENDPOINT=""
+GOOGLE_DOCUMENT_AI_FIELD_MASK=""
+GOOGLE_DOCUMENT_AI_SKIP_HUMAN_REVIEW="true"
 OCR_HTTP_ENDPOINT="https://ocr-provider.example/extract"
 OCR_HTTP_BEARER_TOKEN=""
 OCR_HTTP_INCLUDE_FILE="true"
@@ -691,11 +712,13 @@ OCR_HTTP_DIRECT_PDF="false"
 ```
 
 - `auto` uses local Windows OCR for uploaded image files on Windows, then tries
-  Azure Document Intelligence when configured, then falls back to the configured
-  HTTP OCR endpoint when available, then mock rows.
+  Azure Document Intelligence when configured, then Google Document AI when
+  configured, then falls back to the configured HTTP OCR endpoint when
+  available, then mock rows.
 - `mock` always generates mock rows.
 - `windows` requires local Windows OCR for uploaded image files.
 - `azure` sends local uploaded documents to Azure Document Intelligence.
+- `google` sends local uploaded documents to Google Document AI.
 - `http` sends a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
 
 When `OCR_PROVIDER="azure"`, set `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` and
@@ -714,6 +737,24 @@ before they are saved. Unmapped Azure table columns can be returned as
 `suggestedFields` so the reviewer can add missing template fields and
 re-extract.
 
+When `OCR_PROVIDER="google"`, set `GOOGLE_DOCUMENT_AI_PROJECT_ID`,
+`GOOGLE_DOCUMENT_AI_LOCATION`, `GOOGLE_DOCUMENT_AI_PROCESSOR_ID`, and
+`GOOGLE_DOCUMENT_AI_ACCESS_TOKEN`. Optional settings include
+`GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION` for a pinned processor version,
+`GOOGLE_DOCUMENT_AI_ENDPOINT` for private or regional gateways,
+`GOOGLE_DOCUMENT_AI_FIELD_MASK` for limiting the provider response, and
+`GOOGLE_DOCUMENT_AI_SKIP_HUMAN_REVIEW`, which defaults to `true`. The adapter
+sends the document bytes as a base64 `rawDocument`, carries PDF page-range
+choices through `processOptions.individualPageSelector`, and uses the selected
+Document AI processor's synchronous online processing endpoint.
+
+Google Document AI table rows are mapped into CrowdLog review rows by matching
+table headers against field keys, labels, aliases, and common attendance terms.
+For `layout: "form"`, Document AI form fields and entities can map label/value
+pairs into a single reviewed form-entry row. Values still pass through the
+existing CrowdLog normalization and validation flow. Unmapped Google table
+columns can also be returned as `suggestedFields` for template follow-up.
+
 When `OCR_HTTP_ENDPOINT` is set, the HTTP OCR provider posts document metadata,
 base64 file content, template fields, and extraction options to the endpoint.
 `OCR_HTTP_BEARER_TOKEN` adds an `Authorization: Bearer ...` header.
@@ -726,10 +767,10 @@ For uploaded PDFs, extraction now accepts a page range. The backend estimates
 the PDF page count from the local uploaded file and clamps the requested range
 before calling the OCR provider. In `auto` render mode, CrowdLog first lets
 provider-native PDF readers handle the full document when available, such as
-configured Azure Document Intelligence or an HTTP bridge with
-`OCR_HTTP_DIRECT_PDF="true"`. Otherwise, when `pdftoppm` is available, the
-backend renders the selected PDF pages to temporary PNG files and sends each
-page through the configured OCR provider. Set
+configured Azure Document Intelligence, configured Google Document AI, or an
+HTTP bridge with `OCR_HTTP_DIRECT_PDF="true"`. Otherwise, when `pdftoppm` is
+available, the backend renders the selected PDF pages to temporary PNG files
+and sends each page through the configured OCR provider. Set
 `OCR_PDF_RENDER_MODE="full-document"` to force direct PDF OCR, or
 `OCR_PDF_RENDER_MODE="render-pages"` to force page rendering. If rendering is
 skipped or unavailable, CrowdLog sends the full PDF to the OCR provider and
@@ -745,16 +786,16 @@ later provider or mock fallback, the configured OCR wrapper preserves sanitized
 fallback failure messages alongside the provider result.
 
 For deployment readiness checks, `GET /health/ocr` returns a read-only OCR
-configuration summary: selected provider mode, mock fallback setting, Azure/HTTP
-configuration booleans, direct-PDF support, `pdftoppm` availability, and whether
-PDF extraction is ready, degraded, or not configured. It does not run a provider
-network call or expose API keys.
+configuration summary: selected provider mode, mock fallback setting,
+Azure/Google/HTTP configuration booleans, direct-PDF support, `pdftoppm`
+availability, and whether PDF extraction is ready, degraded, or not configured.
+It does not run a provider network call or expose API keys.
 
 For credentialed provider smoke checks, run `npm run smoke:ocr` after setting
-`OCR_SMOKE_PROVIDER` to `azure` or `http` and `OCR_SMOKE_FILE` to a local sample
-PDF or image. The runner builds the API, calls the selected provider directly,
-and prints a summary that omits extracted cell values so real attendance data
-does not land in terminal logs. Optional smoke variables include
+`OCR_SMOKE_PROVIDER` to `azure`, `google`, or `http` and `OCR_SMOKE_FILE` to a
+local sample PDF or image. The runner builds the API, calls the selected
+provider directly, and prints a summary that omits extracted cell values so real
+attendance data does not land in terminal logs. Optional smoke variables include
 `OCR_SMOKE_LAYOUT`, `OCR_SMOKE_ROW_COUNT`, `OCR_SMOKE_PAGE_START`,
 `OCR_SMOKE_PAGE_COUNT`, `OCR_SMOKE_TOTAL_PAGES`, `OCR_SMOKE_REQUIRE_ROWS`, and
 `OCR_SMOKE_FIELDS_JSON` for matching the sample sheet's template.
@@ -809,22 +850,22 @@ production PDF hardening pass, richer multi-select checkbox preservation, true
 multi-select template fields, split-stroke signature-region pass,
 provider-native PDF auto routing, direct-PDF failure diagnostics, and the first
 OCR deployment readiness check are complete for the current app shape. A
-repeatable Azure/HTTP OCR smoke-check runner is also in place for credentialed
-deployment environments. SMTP can stay as an optional backlog item unless a
-deployment specifically needs it.
+repeatable Azure/Google/HTTP OCR smoke-check runner and a Google Document AI
+adapter are also in place for credentialed deployment environments. SMTP can
+stay as an optional backlog item unless a deployment specifically needs it.
 
-1. Run `npm run smoke:ocr` against real Azure/HTTP credentials and sample PDFs
-   when a deployment environment is available, then capture any provider-specific
-   mapping or fallback issues that appear.
-2. Add more vendor-specific OCR adapters, such as Google Document AI/Vision or
-   AWS Textract, if a deployment needs them.
+1. Run `npm run smoke:ocr` against real Azure/Google/HTTP credentials and
+   sample PDFs when a deployment environment is available, then capture any
+   provider-specific mapping or fallback issues that appear.
+2. Add more vendor-specific OCR adapters, such as Google Vision or AWS Textract,
+   if a deployment needs them.
 3. Continue broader form-layout OCR only when real sheets expose new layout
    patterns.
 
 ## Still Left To Build
 
 - Additional vendor-specific cloud OCR adapters beyond Azure Document
-  Intelligence and the generic HTTP OCR bridge.
+  Intelligence, Google Document AI, and the generic HTTP OCR bridge.
 - Broader form-layout OCR parsing beyond wrapped values, signature checkboxes,
   true multi-select checkbox groups, split signature stroke clusters, and simple
   signature-region marks.
@@ -882,9 +923,9 @@ Already done:
 - Failed extraction attempts mark the uploaded document as failed and persist
   sanitized diagnostic raw OCR metadata; auto-mode provider fallback failures
   are preserved when extraction recovers through another provider or mock rows
-- `GET /health/ocr` reports OCR provider mode, direct-PDF support, Azure/HTTP
-  configuration readiness, `pdftoppm` availability, and the effective PDF
-  extraction path without exposing provider secrets
+- `GET /health/ocr` reports OCR provider mode, direct-PDF support,
+  Azure/Google/HTTP configuration readiness, `pdftoppm` availability, and the
+  effective PDF extraction path without exposing provider secrets
 - Document extraction can request table-row or form-entry layout, with form-style mock fallback rows
 - Windows OCR can parse first-pass form label/value layouts, normalize the
   extracted values by field type, include bounding boxes, and split repeated
@@ -911,18 +952,23 @@ Already done:
   template fields, preserve bounding boxes, return suggested fields for unmapped
   columns, and run before the generic HTTP bridge in `auto` mode when Azure is
   configured
-- `npm run smoke:ocr` can run a credentialed Azure or HTTP OCR provider smoke
-  check against a local sample PDF/image and prints row counts, field coverage,
-  confidence, issue counts, and suggested field metadata without printing
-  extracted cell values
+- `OCR_PROVIDER="google"` can send local uploaded documents to Google Document
+  AI, post base64 raw document content to the online processing API, map tables
+  and form fields into saved template fields, preserve bounding boxes, return
+  suggested fields for unmapped columns, and run before the generic HTTP bridge
+  in `auto` mode when Google credentials are configured
+- `npm run smoke:ocr` can run a credentialed Azure, Google, or HTTP OCR provider
+  smoke check against a local sample PDF/image and prints row counts, field
+  coverage, confidence, issue counts, and suggested field metadata without
+  printing extracted cell values
 - Uploaded documents can be replaced or deleted, with extracted rows and local files cleaned up
 - OCR can suggest missing uploaded sheet columns, such as `taxa`
 - Windows OCR can map columns using labels, keys, aliases, and common header variants
 - Windows OCR can clean and validate extracted values by field type and lower confidence for suspicious cells
 - Review cells show OCR validation issue text
 - Focused OCR normalization, Windows form-layout, HTTP OCR provider, Azure
-  Document Intelligence provider, OCR deployment readiness, and OCR smoke-runner
-  tests can run with `npm run test:ocr`
+  Document Intelligence provider, Google Document AI provider, OCR deployment
+  readiness, and OCR smoke-runner tests can run with `npm run test:ocr`
 - Windows OCR has low-resolution glyph cleanup and adaptive row/column grouping
 - Local email sign-in/sign-out uses HTTP-only sessions
 - Events, documents, extraction, and records are protected by owner/member access
@@ -952,7 +998,7 @@ Already done:
 - Owners manage reviewers, event deletion, templates, and suggested OCR fields
 - Reviewers can access the event workspace and review extracted rows
 - Approved/rejected rows track the reviewer and reviewed time for reporting
-- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, OCR deployment readiness, OCR smoke-runner behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, and OCR normalization
+- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, OCR deployment readiness, OCR smoke-runner behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, Google Document AI provider behavior, and OCR normalization
 - Run the focused API suite with `npm run test:api`
 - Review workspace has client-side search, status filters, summary counts, reporting panels, visible-row CSV export, and server-side full-event CSV/Excel export
 - Portfolio case study and screenshot guide live in `docs/`
@@ -961,7 +1007,7 @@ Already done:
 - The five captured portfolio screenshots are stored in `docs/screenshots`
 
 Current next phase:
-The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, first OCR deployment readiness check, repeatable Azure/HTTP OCR smoke-check runner, reviewable multi-select checkbox preservation, and true multi-select template fields are complete for now. Continue with OCR/document depth: run `npm run smoke:ocr` against real Azure/HTTP credentials and sample PDFs when available, add additional vendor-specific adapters such as Google Document AI/Vision or AWS Textract if a deployment needs them, or broaden form-layout parsing when real sheets expose new patterns. SMTP remains an optional backlog adapter only if a deployment needs it.
+The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, Google Document AI adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, first OCR deployment readiness check, repeatable Azure/Google/HTTP OCR smoke-check runner, reviewable multi-select checkbox preservation, and true multi-select template fields are complete for now. Continue with OCR/document depth: run `npm run smoke:ocr` against real Azure/Google/HTTP credentials and sample PDFs when available, add additional vendor-specific adapters such as Google Vision or AWS Textract if a deployment needs them, or broaden form-layout parsing when real sheets expose new patterns. SMTP remains an optional backlog adapter only if a deployment needs it.
 
 Please inspect the repo first, avoid reading .env secrets, then continue from the OCR/document depth phase.
 ```

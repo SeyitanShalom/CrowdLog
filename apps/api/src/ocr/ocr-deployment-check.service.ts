@@ -31,6 +31,12 @@ export class OcrDeploymentCheckService {
       endpointConfigured: this.hasEnv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"),
       keyConfigured: this.hasEnv("AZURE_DOCUMENT_INTELLIGENCE_KEY"),
     };
+    const google = {
+      projectConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_PROJECT_ID"),
+      locationConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_LOCATION"),
+      processorConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_PROCESSOR_ID"),
+      accessTokenConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_ACCESS_TOKEN"),
+    };
     const http = {
       endpointConfigured: this.hasEnv("OCR_HTTP_ENDPOINT"),
       directPdfEnabled: process.env.OCR_HTTP_DIRECT_PDF === "true",
@@ -48,6 +54,11 @@ export class OcrDeploymentCheckService {
       azureConfigured: azure.endpointConfigured && azure.keyConfigured,
       directPdfSupported,
       fallbackToMock,
+      googleConfigured:
+        google.projectConfigured &&
+        google.locationConfigured &&
+        google.processorConfigured &&
+        google.accessTokenConfigured,
       httpConfigured: http.endpointConfigured,
       httpDirectPdfReady: http.endpointConfigured && http.directPdfEnabled,
       pdfExtractionPath,
@@ -73,6 +84,14 @@ export class OcrDeploymentCheckService {
           ...azure,
           configured: azure.endpointConfigured && azure.keyConfigured,
         },
+        google: {
+          ...google,
+          configured:
+            google.projectConfigured &&
+            google.locationConfigured &&
+            google.processorConfigured &&
+            google.accessTokenConfigured,
+        },
         http: {
           ...http,
           configured: http.endpointConfigured,
@@ -87,6 +106,7 @@ export class OcrDeploymentCheckService {
     azureConfigured,
     directPdfSupported,
     fallbackToMock,
+    googleConfigured,
     httpConfigured,
     httpDirectPdfReady,
     pdfExtractionPath,
@@ -96,6 +116,7 @@ export class OcrDeploymentCheckService {
     azureConfigured: boolean;
     directPdfSupported: boolean;
     fallbackToMock: boolean;
+    googleConfigured: boolean;
     httpConfigured: boolean;
     httpDirectPdfReady: boolean;
     pdfExtractionPath: DeploymentCheck;
@@ -116,6 +137,13 @@ export class OcrDeploymentCheckService {
         message: httpConfigured
           ? "Generic HTTP OCR endpoint is configured."
           : "Generic HTTP OCR endpoint is not configured.",
+      },
+      {
+        name: "google_configuration",
+        status: googleConfigured ? "ready" : "not_configured",
+        message: googleConfigured
+          ? "Google Document AI project, location, processor, and access token are configured."
+          : "Google Document AI is not fully configured.",
       },
       {
         name: "http_direct_pdf",

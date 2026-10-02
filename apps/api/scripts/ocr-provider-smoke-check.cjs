@@ -2,7 +2,7 @@ const { existsSync, statSync } = require("node:fs");
 const { basename, extname, resolve } = require("node:path");
 
 const DEFAULT_DATE = new Date("2026-01-01T00:00:00.000Z");
-const SUPPORTED_PROVIDERS = new Set(["azure", "http"]);
+const SUPPORTED_PROVIDERS = new Set(["azure", "google", "http"]);
 const PRISMA_FIELD_TYPES = new Set([
   "TEXT",
   "EMAIL",
@@ -61,7 +61,7 @@ function readSmokeConfig(env = process.env, cwd = process.cwd()) {
 
   if (!provider || !SUPPORTED_PROVIDERS.has(provider)) {
     throw new Error(
-      'Set OCR_SMOKE_PROVIDER to "azure" or "http" for a real-provider OCR smoke check.',
+      'Set OCR_SMOKE_PROVIDER to "azure", "google", or "http" for a real-provider OCR smoke check.',
     );
   }
 
@@ -132,6 +132,24 @@ function validateProviderEnvironment(provider, env = process.env) {
 
   if (provider === "http" && !env.OCR_HTTP_ENDPOINT?.trim()) {
     missing.push("OCR_HTTP_ENDPOINT");
+  }
+
+  if (provider === "google") {
+    if (!env.GOOGLE_DOCUMENT_AI_PROJECT_ID?.trim()) {
+      missing.push("GOOGLE_DOCUMENT_AI_PROJECT_ID");
+    }
+
+    if (!env.GOOGLE_DOCUMENT_AI_LOCATION?.trim()) {
+      missing.push("GOOGLE_DOCUMENT_AI_LOCATION");
+    }
+
+    if (!env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID?.trim()) {
+      missing.push("GOOGLE_DOCUMENT_AI_PROCESSOR_ID");
+    }
+
+    if (!env.GOOGLE_DOCUMENT_AI_ACCESS_TOKEN?.trim()) {
+      missing.push("GOOGLE_DOCUMENT_AI_ACCESS_TOKEN");
+    }
   }
 
   if (missing.length > 0) {
@@ -275,6 +293,14 @@ function createProvider(provider) {
 
       return new HttpOcrProvider();
     }
+
+    if (provider === "google") {
+      const {
+        GoogleDocumentAiOcrProvider,
+      } = require("../dist/ocr/google-document-ai-ocr.provider");
+
+      return new GoogleDocumentAiOcrProvider();
+    }
   } catch (error) {
     throw new Error(
       "Could not load built OCR provider files. Run npm run build before running the smoke check.",
@@ -378,7 +404,15 @@ function normalizeProviderName(value) {
     return "azure";
   }
 
-  if (normalized === "http" || normalized === "azure") {
+  if (normalized === "google-document-ai") {
+    return "google";
+  }
+
+  if (
+    normalized === "http" ||
+    normalized === "azure" ||
+    normalized === "google"
+  ) {
     return normalized;
   }
 
@@ -502,10 +536,11 @@ function helpText() {
   return `
 Usage:
   OCR_SMOKE_PROVIDER=azure OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
+  OCR_SMOKE_PROVIDER=google OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
   OCR_SMOKE_PROVIDER=http OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
 
 Environment:
-  OCR_SMOKE_PROVIDER       Required: azure or http.
+  OCR_SMOKE_PROVIDER       Required: azure, google, or http.
   OCR_SMOKE_FILE           Required: local PDF/image path.
   OCR_SMOKE_FILE_TYPE      Optional MIME type; inferred from extension.
   OCR_SMOKE_LAYOUT         Optional: table or form. Defaults to table.
@@ -518,6 +553,8 @@ Environment:
 
 Provider configuration:
   Azure requires AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY.
+  Google requires GOOGLE_DOCUMENT_AI_PROJECT_ID, GOOGLE_DOCUMENT_AI_LOCATION,
+  GOOGLE_DOCUMENT_AI_PROCESSOR_ID, and GOOGLE_DOCUMENT_AI_ACCESS_TOKEN.
   HTTP requires OCR_HTTP_ENDPOINT and supports OCR_HTTP_BEARER_TOKEN, OCR_HTTP_DIRECT_PDF, and OCR_HTTP_INCLUDE_FILE.
 
 The summary intentionally omits extracted cell values so real smoke-test output

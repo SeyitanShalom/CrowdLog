@@ -102,14 +102,15 @@ Reviewer role management is still a later phase slice.
 The API selects an OCR provider with `OCR_PROVIDER`:
 
 - `auto` uses local Windows OCR for uploaded image files on Windows, can send
-  PDFs directly to Azure or an opted-in HTTP bridge, then falls back through the
-  configured cloud providers and mock rows.
+  PDFs directly to Azure, Google Document AI, or an opted-in HTTP bridge, then
+  falls back through the configured cloud providers and mock rows.
 - `mock` always generates mock review rows.
 - `windows` requires local Windows OCR and fails if it cannot run.
 - `azure` sends local uploaded documents to Azure Document Intelligence.
+- `google` sends local uploaded documents to Google Document AI.
 - `http` posts a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
 
-Azure Document Intelligence configuration:
+Cloud OCR configuration:
 
 ```env
 OCR_PDF_RENDER_MODE="auto"
@@ -121,6 +122,14 @@ AZURE_DOCUMENT_INTELLIGENCE_API_VERSION="2024-11-30"
 AZURE_DOCUMENT_INTELLIGENCE_FEATURES=""
 AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS="1000"
 AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS="60000"
+GOOGLE_DOCUMENT_AI_PROJECT_ID=""
+GOOGLE_DOCUMENT_AI_LOCATION="us"
+GOOGLE_DOCUMENT_AI_PROCESSOR_ID=""
+GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION=""
+GOOGLE_DOCUMENT_AI_ACCESS_TOKEN=""
+GOOGLE_DOCUMENT_AI_ENDPOINT=""
+GOOGLE_DOCUMENT_AI_FIELD_MASK=""
+GOOGLE_DOCUMENT_AI_SKIP_HUMAN_REVIEW="true"
 ```
 
 The Azure adapter submits the uploaded document bytes to the async analyze
@@ -128,15 +137,26 @@ endpoint, polls the operation result URL, maps layout table cells into the event
 template fields, preserves bounding boxes, and can suggest fields for unmapped
 table columns.
 
+Google Document AI configuration uses `GOOGLE_DOCUMENT_AI_PROJECT_ID`,
+`GOOGLE_DOCUMENT_AI_LOCATION`, `GOOGLE_DOCUMENT_AI_PROCESSOR_ID`, and
+`GOOGLE_DOCUMENT_AI_ACCESS_TOKEN`. Optional values include
+`GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION`, `GOOGLE_DOCUMENT_AI_ENDPOINT`,
+`GOOGLE_DOCUMENT_AI_FIELD_MASK`, and `GOOGLE_DOCUMENT_AI_SKIP_HUMAN_REVIEW`.
+The Google adapter posts base64 `rawDocument` content to the online processing
+API, carries PDF page ranges through `processOptions.individualPageSelector`,
+maps table rows and form fields into saved template fields, preserves bounding
+boxes, and can suggest fields for unmapped table columns.
+
 For the generic HTTP OCR bridge, set `OCR_HTTP_DIRECT_PDF="true"` only when the
 configured endpoint can read uploaded PDFs directly and should bypass page
 rendering in `auto` mode.
 
 For PDF uploads, `OCR_PDF_RENDER_MODE="auto"` first uses provider-native PDF OCR
-when available, such as configured Azure Document Intelligence or an HTTP bridge
-with `OCR_HTTP_DIRECT_PDF="true"`. Otherwise it renders selected pages with
-`pdftoppm` when it is available. Set `OCR_PDF_RENDER_MODE="full-document"` to
-force direct PDF OCR, or `OCR_PDF_RENDER_MODE="render-pages"` to force page
+when available, such as configured Azure Document Intelligence, configured
+Google Document AI, or an HTTP bridge with `OCR_HTTP_DIRECT_PDF="true"`.
+Otherwise it renders selected pages with `pdftoppm` when it is available. Set
+`OCR_PDF_RENDER_MODE="full-document"` to force direct PDF OCR, or
+`OCR_PDF_RENDER_MODE="render-pages"` to force page
 rendering. When rendering is skipped or unavailable, the API records the render
 mode, renderer, fallback reason, direct provider, page range, layout, and
 provider result in raw OCR metadata.
@@ -150,16 +170,16 @@ preserved in the configured OCR wrapper when extraction later recovers through
 another provider or mock fallback.
 
 `GET /health/ocr` is a read-only deployment check for OCR/PDF readiness. It
-reports the selected provider mode, mock fallback setting, Azure/HTTP
+reports the selected provider mode, mock fallback setting, Azure/Google/HTTP
 configuration booleans, direct-PDF support, `pdftoppm` availability, and the
 effective PDF extraction path without exposing provider secrets or calling an
 external OCR API.
 
 For a credentialed provider smoke check, run `npm run smoke:ocr` after setting
-`OCR_SMOKE_PROVIDER` to `azure` or `http` and `OCR_SMOKE_FILE` to a local sample
-PDF or image. The script calls the selected provider directly after building the
-API and prints row counts, field coverage, confidence, issue counts, and
-suggested field metadata without printing extracted cell values.
+`OCR_SMOKE_PROVIDER` to `azure`, `google`, or `http` and `OCR_SMOKE_FILE` to a
+local sample PDF or image. The script calls the selected provider directly after
+building the API and prints row counts, field coverage, confidence, issue
+counts, and suggested field metadata without printing extracted cell values.
 
 Optional smoke-check variables:
 

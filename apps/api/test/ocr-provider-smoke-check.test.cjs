@@ -170,6 +170,7 @@ test("OCR provider smoke summary omits extracted cell values", () => {
 
 test("OCR provider smoke helper validates provider setup by variable name only", () => {
   assert.equal(normalizeProviderName("azure-document-intelligence"), "azure");
+  assert.equal(normalizeProviderName("google-document-ai"), "google");
   assert.equal(normalizeProviderName("http"), "http");
   assert.equal(inferFileType("sheet.webp"), "image/webp");
 
@@ -183,6 +184,15 @@ test("OCR provider smoke helper validates provider setup by variable name only",
   assert.throws(
     () => validateProviderEnvironment("http", {}),
     /OCR_HTTP_ENDPOINT/,
+  );
+  assert.throws(
+    () =>
+      validateProviderEnvironment("google", {
+        GOOGLE_DOCUMENT_AI_PROJECT_ID: "crowdlog-project",
+        GOOGLE_DOCUMENT_AI_LOCATION: "us",
+        GOOGLE_DOCUMENT_AI_PROCESSOR_ID: "processor_1",
+      }),
+    /GOOGLE_DOCUMENT_AI_ACCESS_TOKEN/,
   );
 });
 

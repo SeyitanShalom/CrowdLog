@@ -5,11 +5,18 @@ import type {
   OcrProvider,
 } from "./ocr-provider.interface";
 import { AzureDocumentIntelligenceOcrProvider } from "./azure-document-intelligence-ocr.provider";
+import { GoogleDocumentAiOcrProvider } from "./google-document-ai-ocr.provider";
 import { HttpOcrProvider } from "./http-ocr.provider";
 import { MockOcrProvider } from "./mock-ocr.provider";
 import { WindowsOcrProvider } from "./windows-ocr.provider";
 
-type OcrProviderMode = "auto" | "mock" | "windows" | "http" | "azure";
+type OcrProviderMode =
+  | "auto"
+  | "mock"
+  | "windows"
+  | "http"
+  | "azure"
+  | "google";
 type OcrFallbackFailure = {
   provider: string;
   message: string;
@@ -24,6 +31,7 @@ export class ConfiguredOcrProvider implements OcrProvider {
     private readonly windowsOcrProvider: WindowsOcrProvider,
     private readonly httpOcrProvider: HttpOcrProvider,
     private readonly azureOcrProvider?: AzureDocumentIntelligenceOcrProvider,
+    private readonly googleOcrProvider?: GoogleDocumentAiOcrProvider,
   ) {}
 
   canReadPdfDirectly(input: OcrExtractionInput) {
@@ -41,12 +49,20 @@ export class ConfiguredOcrProvider implements OcrProvider {
       return this.httpOcrProvider.canReadPdfDirectly?.(input) ?? false;
     }
 
+    if (mode === "google") {
+      return this.googleOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
     if (mode !== "auto") {
       return false;
     }
 
     if (this.canUseAzureOcr(input)) {
       return this.azureOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (this.canUseGoogleOcr(input)) {
+      return this.googleOcrProvider?.canReadPdfDirectly?.(input) ?? false;
     }
 
     if (this.canUseHttpOcr()) {
@@ -69,6 +85,10 @@ export class ConfiguredOcrProvider implements OcrProvider {
 
     if (mode === "azure") {
       return this.azureProvider().extract(input);
+    }
+
+    if (mode === "google") {
+      return this.googleProvider().extract(input);
     }
 
     const fallbackFailures: OcrFallbackFailure[] = [];
@@ -104,6 +124,23 @@ export class ConfiguredOcrProvider implements OcrProvider {
       }
     }
 
+    if (this.canUseGoogleOcr(input)) {
+      try {
+        return this.withFallbackDiagnostics(
+          await this.googleProvider().extract(input),
+          fallbackFailures,
+        );
+      } catch (error) {
+        if (process.env.OCR_FALLBACK_TO_MOCK === "false") {
+          throw error;
+        }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.googleProvider().name, error),
+        );
+      }
+    }
+
     if (this.canUseHttpOcr()) {
       try {
         return this.withFallbackDiagnostics(
@@ -135,10 +172,16 @@ export class ConfiguredOcrProvider implements OcrProvider {
       value === "windows" ||
       value === "http" ||
       value === "azure" ||
-      value === "azure-document-intelligence"
+      value === "azure-document-intelligence" ||
+      value === "google" ||
+      value === "google-document-ai"
     ) {
       if (value === "azure-document-intelligence") {
         return "azure";
+      }
+
+      if (value === "google-document-ai") {
+        return "google";
       }
 
       return value;
@@ -168,12 +211,31 @@ export class ConfiguredOcrProvider implements OcrProvider {
     );
   }
 
+  private canUseGoogleOcr(input: OcrExtractionInput) {
+    return (
+      Boolean(this.googleOcrProvider) &&
+      Boolean(input.document.filePath) &&
+      Boolean(process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID?.trim()) &&
+      Boolean(process.env.GOOGLE_DOCUMENT_AI_LOCATION?.trim()) &&
+      Boolean(process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID?.trim()) &&
+      Boolean(process.env.GOOGLE_DOCUMENT_AI_ACCESS_TOKEN?.trim())
+    );
+  }
+
   private azureProvider() {
     if (!this.azureOcrProvider) {
       throw new Error("Azure Document Intelligence OCR provider is not registered.");
     }
 
     return this.azureOcrProvider;
+  }
+
+  private googleProvider() {
+    if (!this.googleOcrProvider) {
+      throw new Error("Google Document AI OCR provider is not registered.");
+    }
+
+    return this.googleOcrProvider;
   }
 
   private withFallbackDiagnostics(
@@ -225,6 +287,10 @@ export class ConfiguredOcrProvider implements OcrProvider {
       )
       .replace(
         /((?:api[_-]?key|subscription[_-]?key|token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      )
+      .replace(
+        /((?:access[_-]?token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
         "$1[redacted]",
       );
   }

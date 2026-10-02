@@ -43,6 +43,10 @@ test("OCR deployment check reports direct PDF readiness without exposing secrets
   process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT =
     "https://crowdlog-test.cognitiveservices.azure.com";
   process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY = "azure-secret";
+  process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID = "crowdlog-project";
+  process.env.GOOGLE_DOCUMENT_AI_LOCATION = "us";
+  process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID = "processor_1";
+  process.env.GOOGLE_DOCUMENT_AI_ACCESS_TOKEN = "google-secret";
   process.env.OCR_HTTP_ENDPOINT = "https://ocr-provider.example/extract";
   process.env.OCR_HTTP_DIRECT_PDF = "true";
 
@@ -57,7 +61,12 @@ test("OCR deployment check reports direct PDF readiness without exposing secrets
     assert.equal(result.pdf.directPdfSupported, true);
     assert.equal(result.pdf.renderer.available, false);
     assert.equal(result.providers.azure.configured, true);
+    assert.equal(result.providers.google.configured, true);
     assert.equal(result.providers.http.directPdfReady, true);
+    assert.equal(
+      result.checks.find((item) => item.name === "google_configuration").status,
+      "ready",
+    );
     assert.equal(
       result.checks.find((item) => item.name === "direct_pdf_provider").status,
       "ready",
@@ -68,7 +77,10 @@ test("OCR deployment check reports direct PDF readiness without exposing secrets
     );
     assert.match(serialized, /Bearer \[redacted\]/);
     assert.match(serialized, /api-key=\[redacted\]/);
-    assert.doesNotMatch(serialized, /azure-secret|render-secret|renderer-secret/);
+    assert.doesNotMatch(
+      serialized,
+      /azure-secret|google-secret|render-secret|renderer-secret/,
+    );
   } finally {
     restoreEnv(previousEnv);
   }
@@ -90,6 +102,10 @@ test("OCR deployment check reports renderer-ready PDF extraction path", async ()
   process.env.OCR_PDF_RENDER_MODE = "render-pages";
   delete process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT;
   delete process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY;
+  delete process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID;
+  delete process.env.GOOGLE_DOCUMENT_AI_LOCATION;
+  delete process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID;
+  delete process.env.GOOGLE_DOCUMENT_AI_ACCESS_TOKEN;
   delete process.env.OCR_HTTP_ENDPOINT;
   delete process.env.OCR_HTTP_DIRECT_PDF;
 
@@ -131,6 +147,10 @@ function snapshotEnv() {
       process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
     AZURE_DOCUMENT_INTELLIGENCE_KEY:
       process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
+    GOOGLE_DOCUMENT_AI_PROJECT_ID: process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID,
+    GOOGLE_DOCUMENT_AI_LOCATION: process.env.GOOGLE_DOCUMENT_AI_LOCATION,
+    GOOGLE_DOCUMENT_AI_PROCESSOR_ID: process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID,
+    GOOGLE_DOCUMENT_AI_ACCESS_TOKEN: process.env.GOOGLE_DOCUMENT_AI_ACCESS_TOKEN,
     OCR_HTTP_ENDPOINT: process.env.OCR_HTTP_ENDPOINT,
     OCR_HTTP_DIRECT_PDF: process.env.OCR_HTTP_DIRECT_PDF,
     OCR_HTTP_INCLUDE_FILE: process.env.OCR_HTTP_INCLUDE_FILE,
