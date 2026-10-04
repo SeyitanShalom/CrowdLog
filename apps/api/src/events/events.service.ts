@@ -14,6 +14,10 @@ import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { CreateTemplateDto } from "./dto/create-template.dto";
 import { TemplateFieldInputDto } from "./dto/template-field-input.dto";
+import {
+  UpdateEventDto,
+  UpdateTemplateFieldInputDto,
+} from "./dto/update-event.dto";
 import { UpdateEventMemberDto } from "./dto/update-event-member.dto";
 import {
   getEventInclude,
@@ -124,6 +128,93 @@ export class EventsService {
     );
 
     return { id: eventId };
+  }
+
+  async updateEvent(eventId: string, dto: UpdateEventDto, userId: string) {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: {
+        members: true,
+        templates: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            fields: {
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        },
+      },
+    });
+
+    if (!event) {
+      throw new NotFoundException("Event not found.");
+    }
+
+    this.ensureCanManageEvent(event, userId);
+
+    if (dto.fields) {
+      this.ensureUniqueFieldKeys(dto.fields);
+    }
+
+    const updatedEvent = await this.prisma.$transaction(async (tx) => {
+      const eventData: Prisma.EventUpdateInput = {};
+
+      if (dto.title !== undefined) {
+        eventData.title = dto.title;
+      }
+
+      if ("description" in dto) {
+        eventData.description = dto.description ?? null;
+      }
+
+      if ("eventDate" in dto) {
+        eventData.eventDate = dto.eventDate ? new Date(dto.eventDate) : null;
+      }
+
+      if (Object.keys(eventData).length > 0) {
+        await tx.event.update({
+          where: { id: eventId },
+          data: eventData,
+        });
+      }
+
+      const template =
+        event.templates.find((candidate) => candidate.isDefault) ??
+        event.templates[0];
+
+      if (template) {
+        if (dto.templateName !== undefined) {
+          await tx.attendanceTemplate.update({
+            where: { id: template.id },
+            data: { name: dto.templateName },
+          });
+        }
+
+        if (dto.fields) {
+          await this.replaceTemplateFields(tx, template, dto.fields);
+        }
+      } else if (dto.templateName !== undefined || dto.fields) {
+        await tx.attendanceTemplate.create({
+          data: {
+            eventId,
+            name: dto.templateName ?? "Default attendance template",
+            isDefault: true,
+            fields: {
+              create: (dto.fields ?? []).map((field, index) =>
+                this.toTemplateFieldCreateInput(field, index),
+              ),
+            },
+          },
+        });
+      }
+
+      return tx.event.findUniqueOrThrow({
+        where: { id: eventId },
+        include: getEventInclude(),
+      });
+    });
+
+    return toEventResponse(updatedEvent);
   }
 
   async addReviewer(
@@ -394,6 +485,208 @@ export class EventsService {
       aliases: field.aliases ?? [],
       options: fieldUsesOptions(field.type) ? field.options ?? [] : [],
     };
+  }
+
+  private toTemplateFieldUpdateInput(
+    field: TemplateFieldInputDto,
+    index: number,
+  ): Prisma.TemplateFieldUpdateInput {
+    return {
+      label: field.label,
+      key: field.key,
+      type: toPrismaFieldType(field.type),
+      required: field.required ?? false,
+      sortOrder: field.sortOrder ?? index + 1,
+      aliases: field.aliases ?? [],
+      options: fieldUsesOptions(field.type) ? field.options ?? [] : [],
+    };
+  }
+
+  private async replaceTemplateFields(
+    tx: Prisma.TransactionClient,
+    template: {
+      id: string;
+      eventId: string;
+      fields: Array<{ id: string; key: string }>;
+    },
+    fields: UpdateTemplateFieldInputDto[],
+  ) {
+    const existingFieldsById = new Map(
+      template.fields.map((field) => [field.id, field]),
+    );
+    const retainedFieldIds = fields
+      .map((field) => field.id)
+      .filter((id): id is string => Boolean(id && existingFieldsById.has(id)));
+    const retainedFieldIdSet = new Set(retainedFieldIds);
+    const removedFieldKeys = template.fields
+      .filter((field) => !retainedFieldIdSet.has(field.id))
+      .map((field) => field.key);
+    const keyChanges = fields
+      .filter((field) => field.id && existingFieldsById.has(field.id))
+      .map((field) => {
+        const existingField = existingFieldsById.get(field.id ?? "");
+
+        return existingField && existingField.key !== field.key
+          ? { oldKey: existingField.key, newKey: field.key }
+          : null;
+      })
+      .filter(
+        (change): change is { oldKey: string; newKey: string } =>
+          change !== null,
+      );
+
+    await tx.templateField.deleteMany({
+      where: {
+        templateId: template.id,
+        ...(retainedFieldIds.length > 0
+          ? { id: { notIn: retainedFieldIds } }
+          : {}),
+      },
+    });
+
+    await Promise.all(
+      fields.map((field, index) => {
+        const fieldId = field.id;
+
+        if (!fieldId || !existingFieldsById.has(fieldId)) {
+          return Promise.resolve();
+        }
+
+        const existingField = existingFieldsById.get(fieldId);
+
+        if (existingField?.key === field.key) {
+          return Promise.resolve();
+        }
+
+        return tx.templateField.update({
+          where: { id: fieldId },
+          data: { key: `__crowdlog_edit_${index}_${fieldId}` },
+        });
+      }),
+    );
+
+    await Promise.all(
+      fields.map((field, index) => {
+        const fieldId = field.id;
+
+        if (fieldId && existingFieldsById.has(fieldId)) {
+          return tx.templateField.update({
+            where: { id: fieldId },
+            data: this.toTemplateFieldUpdateInput(field, index),
+          });
+        }
+
+        return tx.templateField.create({
+          data: {
+            ...this.toTemplateFieldCreateInput(field, index),
+            templateId: template.id,
+          },
+        });
+      }),
+    );
+
+    await this.migrateRecordDataKeys(
+      tx,
+      template.eventId,
+      keyChanges,
+      removedFieldKeys,
+    );
+  }
+
+  private ensureUniqueFieldKeys(fields: TemplateFieldInputDto[]) {
+    const seenKeys = new Set<string>();
+
+    for (const field of fields) {
+      if (seenKeys.has(field.key)) {
+        throw new BadRequestException(`Duplicate field key: ${field.key}.`);
+      }
+
+      seenKeys.add(field.key);
+    }
+  }
+
+  private async migrateRecordDataKeys(
+    tx: Prisma.TransactionClient,
+    eventId: string,
+    keyChanges: Array<{ oldKey: string; newKey: string }>,
+    removedFieldKeys: string[],
+  ) {
+    if (keyChanges.length === 0 && removedFieldKeys.length === 0) {
+      return;
+    }
+
+    const records = await tx.attendanceRecord.findMany({
+      where: { eventId },
+      select: {
+        id: true,
+        dataJson: true,
+      },
+    });
+
+    await Promise.all(
+      records.map((record) => {
+        const currentData = this.jsonRecord(record.dataJson);
+        const nextData: Record<string, string | number | boolean | null> = {
+          ...currentData,
+        };
+        let didChange = false;
+
+        for (const key of removedFieldKeys) {
+          if (Object.prototype.hasOwnProperty.call(nextData, key)) {
+            delete nextData[key];
+            didChange = true;
+          }
+        }
+
+        for (const change of keyChanges) {
+          if (Object.prototype.hasOwnProperty.call(nextData, change.oldKey)) {
+            delete nextData[change.oldKey];
+            didChange = true;
+          }
+        }
+
+        for (const change of keyChanges) {
+          if (
+            Object.prototype.hasOwnProperty.call(currentData, change.oldKey)
+          ) {
+            nextData[change.newKey] = currentData[change.oldKey];
+            didChange = true;
+          }
+        }
+
+        if (!didChange) {
+          return Promise.resolve();
+        }
+
+        return tx.attendanceRecord.update({
+          where: { id: record.id },
+          data: {
+            dataJson: nextData as Prisma.InputJsonObject,
+          },
+        });
+      }),
+    );
+  }
+
+  private jsonRecord(value: Prisma.JsonValue) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+
+    const result: Record<string, string | number | boolean | null> = {};
+
+    for (const [key, item] of Object.entries(value)) {
+      if (
+        typeof item === "string" ||
+        typeof item === "number" ||
+        typeof item === "boolean" ||
+        item === null
+      ) {
+        result[key] = item;
+      }
+    }
+
+    return result;
   }
 
   private async deleteUploadedFile(fileUrl: string) {

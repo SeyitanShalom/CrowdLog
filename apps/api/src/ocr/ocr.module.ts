@@ -1,7 +1,9 @@
 import { Module } from "@nestjs/common";
+import { AwsTextractOcrProvider } from "./aws-textract-ocr.provider";
 import { AzureDocumentIntelligenceOcrProvider } from "./azure-document-intelligence-ocr.provider";
 import { ConfiguredOcrProvider } from "./configured-ocr.provider";
 import { GoogleDocumentAiOcrProvider } from "./google-document-ai-ocr.provider";
+import { GoogleVisionOcrProvider } from "./google-vision-ocr.provider";
 import { HttpOcrProvider } from "./http-ocr.provider";
 import { MockOcrProvider } from "./mock-ocr.provider";
 import { OcrDeploymentCheckService } from "./ocr-deployment-check.service";
@@ -13,9 +15,11 @@ import { WindowsOcrProvider } from "./windows-ocr.provider";
 @Module({
   controllers: [OcrHealthController],
   providers: [
+    AwsTextractOcrProvider,
     AzureDocumentIntelligenceOcrProvider,
     ConfiguredOcrProvider,
     GoogleDocumentAiOcrProvider,
+    GoogleVisionOcrProvider,
     HttpOcrProvider,
     MockOcrProvider,
     OcrDeploymentCheckService,

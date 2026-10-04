@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { createServer } = require("node:net");
 const test = require("node:test");
 
 const {
@@ -482,6 +483,134 @@ test("sendgrid provider requires an API key and sender", async () => {
   }
 });
 
+test("smtp provider sends reviewer invitations through SMTP", async () => {
+  const smtp = await startFakeSmtpServer();
+  const previousEnv = {
+    INVITATION_EMAIL_PROVIDER: process.env.INVITATION_EMAIL_PROVIDER,
+    INVITATION_EMAIL_SMTP_HOST: process.env.INVITATION_EMAIL_SMTP_HOST,
+    INVITATION_EMAIL_SMTP_PORT: process.env.INVITATION_EMAIL_SMTP_PORT,
+    INVITATION_EMAIL_SMTP_STARTTLS:
+      process.env.INVITATION_EMAIL_SMTP_STARTTLS,
+    INVITATION_EMAIL_SMTP_USERNAME:
+      process.env.INVITATION_EMAIL_SMTP_USERNAME,
+    INVITATION_EMAIL_SMTP_PASSWORD:
+      process.env.INVITATION_EMAIL_SMTP_PASSWORD,
+    INVITATION_EMAIL_FROM: process.env.INVITATION_EMAIL_FROM,
+    INVITATION_EMAIL_REPLY_TO: process.env.INVITATION_EMAIL_REPLY_TO,
+    CROWDLOG_APP_URL: process.env.CROWDLOG_APP_URL,
+  };
+
+  process.env.INVITATION_EMAIL_PROVIDER = "smtp";
+  process.env.INVITATION_EMAIL_SMTP_HOST = "127.0.0.1";
+  process.env.INVITATION_EMAIL_SMTP_PORT = String(smtp.port);
+  process.env.INVITATION_EMAIL_SMTP_STARTTLS = "off";
+  process.env.INVITATION_EMAIL_SMTP_USERNAME = "smtp-user";
+  process.env.INVITATION_EMAIL_SMTP_PASSWORD = "smtp-pass";
+  process.env.INVITATION_EMAIL_FROM = "CrowdLog <noreply@example.com>";
+  process.env.INVITATION_EMAIL_REPLY_TO = "Owner <owner@example.com>";
+  process.env.CROWDLOG_APP_URL = "https://crowdlog.example.com/app";
+
+  try {
+    const result = await new InvitationEmailService().sendReviewerInvitation({
+      eventId: "event_123",
+      eventTitle: "Department Seminar",
+      reviewerEmail: "reviewer@example.com",
+      reviewerName: "Reviewer User",
+      invitedByEmail: "owner@example.com",
+      invitedByName: "Owner User",
+    });
+
+    assert.deepEqual(result, {
+      provider: "smtp",
+      sent: true,
+      host: "127.0.0.1",
+      port: smtp.port,
+      tls: "none",
+    });
+
+    assert.match(smtp.commands[0], /^EHLO /);
+    assert.match(smtp.commands[1], /^AUTH PLAIN /);
+    assert.equal(
+      Buffer.from(smtp.commands[1].split(" ")[2], "base64").toString("utf8"),
+      "\u0000smtp-user\u0000smtp-pass",
+    );
+    assert.equal(smtp.commands[2], "MAIL FROM:<noreply@example.com>");
+    assert.equal(smtp.commands[3], "RCPT TO:<reviewer@example.com>");
+    assert.equal(smtp.commands[4], "DATA");
+    assert.match(smtp.messages[0], /From: CrowdLog <noreply@example.com>/);
+    assert.match(smtp.messages[0], /To: reviewer@example.com/);
+    assert.match(smtp.messages[0], /Reply-To: Owner <owner@example.com>/);
+    assert.match(
+      smtp.messages[0],
+      /Subject: Invitation to review Department Seminar in CrowdLog/,
+    );
+    assert.match(smtp.messages[0], /X-CrowdLog-Event-Id: event_123/);
+    assert.match(smtp.messages[0], /Content-Type: multipart\/alternative/);
+  } finally {
+    restoreEnv(previousEnv);
+    await smtp.close();
+  }
+});
+
+test("smtp provider requires host, sender, and paired credentials", async () => {
+  const previousEnv = {
+    INVITATION_EMAIL_PROVIDER: process.env.INVITATION_EMAIL_PROVIDER,
+    INVITATION_EMAIL_SMTP_HOST: process.env.INVITATION_EMAIL_SMTP_HOST,
+    SMTP_HOST: process.env.SMTP_HOST,
+    INVITATION_EMAIL_FROM: process.env.INVITATION_EMAIL_FROM,
+    INVITATION_EMAIL_SMTP_USERNAME:
+      process.env.INVITATION_EMAIL_SMTP_USERNAME,
+    INVITATION_EMAIL_SMTP_PASSWORD:
+      process.env.INVITATION_EMAIL_SMTP_PASSWORD,
+  };
+
+  process.env.INVITATION_EMAIL_PROVIDER = "smtp";
+  delete process.env.INVITATION_EMAIL_SMTP_HOST;
+  delete process.env.SMTP_HOST;
+  process.env.INVITATION_EMAIL_FROM = "CrowdLog <noreply@example.com>";
+
+  try {
+    await assert.rejects(
+      () =>
+        new InvitationEmailService().sendReviewerInvitation({
+          eventId: "event_123",
+          eventTitle: "Department Seminar",
+          reviewerEmail: "reviewer@example.com",
+        }),
+      /INVITATION_EMAIL_SMTP_HOST or SMTP_HOST/,
+    );
+
+    process.env.INVITATION_EMAIL_SMTP_HOST = "smtp.example.com";
+    delete process.env.INVITATION_EMAIL_FROM;
+
+    await assert.rejects(
+      () =>
+        new InvitationEmailService().sendReviewerInvitation({
+          eventId: "event_123",
+          eventTitle: "Department Seminar",
+          reviewerEmail: "reviewer@example.com",
+        }),
+      /INVITATION_EMAIL_FROM/,
+    );
+
+    process.env.INVITATION_EMAIL_FROM = "CrowdLog <noreply@example.com>";
+    process.env.INVITATION_EMAIL_SMTP_USERNAME = "smtp-user";
+    delete process.env.INVITATION_EMAIL_SMTP_PASSWORD;
+
+    await assert.rejects(
+      () =>
+        new InvitationEmailService().sendReviewerInvitation({
+          eventId: "event_123",
+          eventTitle: "Department Seminar",
+          reviewerEmail: "reviewer@example.com",
+        }),
+      /INVITATION_EMAIL_SMTP_USERNAME and INVITATION_EMAIL_SMTP_PASSWORD/,
+    );
+  } finally {
+    restoreEnv(previousEnv);
+  }
+});
+
 function restoreEnv(previousEnv) {
   for (const [key, value] of Object.entries(previousEnv)) {
     if (value === undefined) {
@@ -490,4 +619,80 @@ function restoreEnv(previousEnv) {
       process.env[key] = value;
     }
   }
+}
+
+async function startFakeSmtpServer() {
+  const commands = [];
+  const messages = [];
+  const server = createServer((socket) => {
+    let buffer = "";
+    let dataMode = false;
+    let message = "";
+
+    socket.write("220 smtp.test ESMTP\r\n");
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+
+      while (buffer.includes("\r\n")) {
+        const lineEnd = buffer.indexOf("\r\n");
+        const line = buffer.slice(0, lineEnd);
+
+        buffer = buffer.slice(lineEnd + 2);
+
+        if (dataMode) {
+          if (line === ".") {
+            messages.push(message);
+            message = "";
+            dataMode = false;
+            socket.write("250 queued\r\n");
+            continue;
+          }
+
+          message += `${line}\r\n`;
+          continue;
+        }
+
+        commands.push(line);
+
+        if (line.startsWith("EHLO")) {
+          socket.write("250-smtp.test\r\n250 AUTH PLAIN\r\n");
+        } else if (line.startsWith("AUTH PLAIN")) {
+          socket.write("235 authenticated\r\n");
+        } else if (line.startsWith("MAIL FROM:")) {
+          socket.write("250 sender ok\r\n");
+        } else if (line.startsWith("RCPT TO:")) {
+          socket.write("250 recipient ok\r\n");
+        } else if (line === "DATA") {
+          dataMode = true;
+          socket.write("354 end with dot\r\n");
+        } else if (line === "QUIT") {
+          socket.write("221 bye\r\n");
+          socket.end();
+        } else {
+          socket.write("250 ok\r\n");
+        }
+      }
+    });
+  });
+
+  await new Promise((resolveServer) => {
+    server.listen(0, "127.0.0.1", resolveServer);
+  });
+
+  return {
+    commands,
+    messages,
+    port: server.address().port,
+    close: () =>
+      new Promise((resolveClose, rejectClose) => {
+        server.close((error) => {
+          if (error) {
+            rejectClose(error);
+            return;
+          }
+
+          resolveClose();
+        });
+      }),
+  };
 }

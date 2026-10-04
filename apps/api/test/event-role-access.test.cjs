@@ -698,6 +698,247 @@ test("reviewers cannot add template fields", async () => {
   assert.equal(prisma.templateField.create.calls.length, 0);
 });
 
+test("owners can update an event and its default template fields", async () => {
+  const existingEvent = eventResponse({
+    templates: [
+      {
+        id: "template_1",
+        eventId: "event_1",
+        name: "Default attendance template",
+        isDefault: true,
+        createdAt: now,
+        updatedAt: now,
+        fields: [templateField(), emailTemplateField()],
+      },
+    ],
+  });
+  const updatedEvent = eventResponse({
+    title: "Updated Seminar",
+    description: "Updated description",
+    eventDate: null,
+    templates: [
+      {
+        id: "template_1",
+        eventId: "event_1",
+        name: "Updated template",
+        isDefault: true,
+        createdAt: now,
+        updatedAt: now,
+        fields: [
+          {
+            ...templateField(),
+            label: "Full Name",
+            key: "full_name",
+            aliases: ["Name"],
+          },
+          {
+            id: "field_phone",
+            templateId: "template_1",
+            label: "Phone",
+            key: "phone",
+            type: "PHONE",
+            required: false,
+            sortOrder: 2,
+            aliases: [],
+            options: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+    ],
+  });
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => existingEvent),
+      update: mockFn(async () => null),
+      findUniqueOrThrow: mockFn(async () => updatedEvent),
+    },
+    attendanceTemplate: {
+      update: mockFn(async () => null),
+      create: mockFn(),
+    },
+    templateField: {
+      deleteMany: mockFn(async () => ({ count: 1 })),
+      update: mockFn(async () => null),
+      create: mockFn(async () => null),
+    },
+    attendanceRecord: {
+      findMany: mockFn(async () => [
+        {
+          id: "record_1",
+          dataJson: {
+            name: "Ada",
+            email: "ada@example.com",
+            notes: "Keep",
+          },
+        },
+      ]),
+      update: mockFn(async () => null),
+    },
+    $transaction: mockFn(async (callback) => callback(prisma)),
+  };
+  const service = new EventsService(prisma);
+
+  const response = await service.updateEvent(
+    "event_1",
+    {
+      title: "Updated Seminar",
+      description: "Updated description",
+      eventDate: null,
+      templateName: "Updated template",
+      fields: [
+        {
+          id: "field_name",
+          label: "Full Name",
+          key: "full_name",
+          type: "text",
+          required: true,
+          aliases: ["Name"],
+          options: [],
+        },
+        {
+          label: "Phone",
+          key: "phone",
+          type: "phone",
+          required: false,
+          aliases: [],
+          options: [],
+        },
+      ],
+    },
+    "user_owner",
+  );
+
+  assert.deepEqual(prisma.event.update.calls[0][0], {
+    where: { id: "event_1" },
+    data: {
+      title: "Updated Seminar",
+      description: "Updated description",
+      eventDate: null,
+    },
+  });
+  assert.deepEqual(prisma.attendanceTemplate.update.calls[0][0], {
+    where: { id: "template_1" },
+    data: { name: "Updated template" },
+  });
+  assert.deepEqual(prisma.templateField.deleteMany.calls[0][0], {
+    where: {
+      templateId: "template_1",
+      id: { notIn: ["field_name"] },
+    },
+  });
+  assert.match(
+    prisma.templateField.update.calls[0][0].data.key,
+    /^__crowdlog_edit_0_field_name$/,
+  );
+  assert.deepEqual(prisma.templateField.update.calls[1][0], {
+    where: { id: "field_name" },
+    data: {
+      label: "Full Name",
+      key: "full_name",
+      type: "TEXT",
+      required: true,
+      sortOrder: 1,
+      aliases: ["Name"],
+      options: [],
+    },
+  });
+  assert.equal(prisma.templateField.create.calls[0][0].data.key, "phone");
+  assert.deepEqual(prisma.attendanceRecord.update.calls[0][0], {
+    where: { id: "record_1" },
+    data: {
+      dataJson: {
+        notes: "Keep",
+        full_name: "Ada",
+      },
+    },
+  });
+  assert.equal(response.title, "Updated Seminar");
+  assert.equal(response.template.name, "Updated template");
+  assert.deepEqual(
+    response.template.fields.map((field) => field.key),
+    ["full_name", "phone"],
+  );
+});
+
+test("reviewers cannot update event templates", async () => {
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () =>
+        eventResponse({
+          members: [
+            {
+              id: "member_reviewer",
+              eventId: "event_1",
+              userId: "user_reviewer",
+              role: EventMemberRole.REVIEWER,
+              createdAt: now,
+              updatedAt: now,
+              user: {
+                id: "user_reviewer",
+                email: "reviewer@example.com",
+                name: "Reviewer",
+              },
+            },
+          ],
+        }),
+      ),
+    },
+    $transaction: mockFn(),
+  };
+  const service = new EventsService(prisma);
+
+  await assert.rejects(
+    () =>
+      service.updateEvent(
+        "event_1",
+        {
+          title: "Updated Seminar",
+        },
+        "user_reviewer",
+      ),
+    ForbiddenException,
+  );
+  assert.equal(prisma.$transaction.calls.length, 0);
+});
+
+test("duplicate field keys are rejected when updating event templates", async () => {
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => eventResponse()),
+    },
+    $transaction: mockFn(),
+  };
+  const service = new EventsService(prisma);
+
+  await assert.rejects(
+    () =>
+      service.updateEvent(
+        "event_1",
+        {
+          fields: [
+            {
+              label: "Name",
+              key: "name",
+              type: "text",
+              required: true,
+            },
+            {
+              label: "Preferred name",
+              key: "name",
+              type: "text",
+              required: false,
+            },
+          ],
+        },
+        "user_owner",
+      ),
+    BadRequestException,
+  );
+  assert.equal(prisma.$transaction.calls.length, 0);
+});
+
 test("reviewers can list records for events where they are members", async () => {
   const prisma = {
     event: {

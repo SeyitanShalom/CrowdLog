@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { mkdir, rm, writeFile } = require("node:fs/promises");
+const { mkdir, readFile, rm, writeFile } = require("node:fs/promises");
 const { join } = require("node:path");
 const test = require("node:test");
 
@@ -8,6 +8,7 @@ const {
   inferFileType,
   normalizeProviderName,
   readSmokeConfig,
+  runSmokeCheck,
   summarizeExtraction,
   validateProviderEnvironment,
 } = require("../scripts/ocr-provider-smoke-check.cjs");
@@ -30,6 +31,7 @@ test("OCR provider smoke config builds a provider extraction input", async () =>
         OCR_SMOKE_PAGE_COUNT: "3",
         OCR_SMOKE_TOTAL_PAGES: "9",
         OCR_SMOKE_REQUIRE_ROWS: "true",
+        OCR_SMOKE_SUMMARY_FILE: join(tempDir, "summary.json"),
         OCR_SMOKE_FIELDS_JSON: JSON.stringify([
           {
             label: "Full Name",
@@ -52,6 +54,7 @@ test("OCR provider smoke config builds a provider extraction input", async () =>
 
     assert.equal(config.provider, "azure");
     assert.equal(config.requireRows, true);
+    assert.equal(config.summaryFilePath, join(tempDir, "summary.json"));
     assert.equal(input.document.fileName, "sample.pdf");
     assert.equal(input.document.fileType, "application/pdf");
     assert.equal(input.document.filePath, filePath);
@@ -91,6 +94,75 @@ test("OCR provider smoke config builds a provider extraction input", async () =>
       ],
     );
   } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("OCR provider smoke check writes a sanitized summary artifact", async () => {
+  const tempDir = join(process.cwd(), ".tmp", "ocr-provider-smoke-summary-test");
+  const summaryPath = join(tempDir, "nested", "summary.json");
+  const field = templateField({ key: "name", label: "Name" });
+  const previousVisionApiKey = process.env.GOOGLE_VISION_API_KEY;
+
+  try {
+    process.env.GOOGLE_VISION_API_KEY = "vision-test-key";
+
+    const summary = await runSmokeCheck(
+      {
+        provider: "google-vision",
+        filePath: join(tempDir, "sample.png"),
+        fileName: "sample.png",
+        fileType: "image/png",
+        fields: [field],
+        layout: "table",
+        rowCount: 10,
+        pageStart: 1,
+        pageCount: 1,
+        requireRows: true,
+        summaryFilePath: summaryPath,
+      },
+      () => ({
+        extract: async () => ({
+          providerName: "google-vision",
+          rows: [
+            {
+              rowNumber: 1,
+              data: { name: "Nneka Bello" },
+              values: [
+                {
+                  field,
+                  confidence: 0.9,
+                  issues: [],
+                },
+              ],
+            },
+          ],
+          suggestedFields: [
+            {
+              key: "department",
+              label: "Department",
+              type: "text",
+              sampleValues: ["Computer Science"],
+            },
+          ],
+        }),
+      }),
+    );
+    const written = await readFile(summaryPath, "utf8");
+    const parsed = JSON.parse(written);
+
+    assert.equal(summary.rows.count, 1);
+    assert.equal(parsed.provider, "google-vision");
+    assert.equal(parsed.rows.count, 1);
+    assert.deepEqual(parsed.rows.preview[0].populatedFields, ["name"]);
+    assert.doesNotMatch(written, /Nneka Bello|Computer Science/);
+  } finally {
+    if (previousVisionApiKey === undefined) {
+      delete process.env.GOOGLE_VISION_API_KEY;
+    } else {
+      process.env.GOOGLE_VISION_API_KEY = previousVisionApiKey;
+    }
+
     await rm(tempDir, { recursive: true, force: true });
   }
 });
@@ -170,7 +242,11 @@ test("OCR provider smoke summary omits extracted cell values", () => {
 
 test("OCR provider smoke helper validates provider setup by variable name only", () => {
   assert.equal(normalizeProviderName("azure-document-intelligence"), "azure");
+  assert.equal(normalizeProviderName("textract"), "aws-textract");
+  assert.equal(normalizeProviderName("aws"), "aws-textract");
   assert.equal(normalizeProviderName("google-document-ai"), "google");
+  assert.equal(normalizeProviderName("google-cloud-vision"), "google-vision");
+  assert.equal(normalizeProviderName("vision"), "google-vision");
   assert.equal(normalizeProviderName("http"), "http");
   assert.equal(inferFileType("sheet.webp"), "image/webp");
 
@@ -193,6 +269,30 @@ test("OCR provider smoke helper validates provider setup by variable name only",
         GOOGLE_DOCUMENT_AI_PROCESSOR_ID: "processor_1",
       }),
     /GOOGLE_DOCUMENT_AI_ACCESS_TOKEN/,
+  );
+  assert.throws(
+    () => validateProviderEnvironment("google-vision", {}),
+    /GOOGLE_VISION_API_KEY or GOOGLE_VISION_ACCESS_TOKEN/,
+  );
+  assert.throws(
+    () =>
+      validateProviderEnvironment("aws-textract", {
+        AWS_TEXTRACT_REGION: "us-east-1",
+        AWS_TEXTRACT_ACCESS_KEY_ID: "AKIATESTACCESS",
+      }),
+    /AWS_TEXTRACT_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY/,
+  );
+  assert.doesNotThrow(() =>
+    validateProviderEnvironment("aws-textract", {
+      AWS_TEXTRACT_REGION: "us-east-1",
+      AWS_TEXTRACT_ACCESS_KEY_ID: "AKIATESTACCESS",
+      AWS_TEXTRACT_SECRET_ACCESS_KEY: "test-secret-key",
+    }),
+  );
+  assert.doesNotThrow(() =>
+    validateProviderEnvironment("google-vision", {
+      GOOGLE_VISION_API_KEY: "vision-test-key",
+    }),
   );
 });
 

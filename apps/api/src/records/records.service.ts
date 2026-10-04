@@ -964,6 +964,10 @@ export class RecordsService {
       .replace(
         /((?:api[_-]?key|subscription[_-]?key|token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
         "$1[redacted]",
+      )
+      .replace(
+        /((?:aws[_-]?)?(?:access[_-]?key[_-]?id|secret[_-]?access[_-]?key)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
       );
   }
 

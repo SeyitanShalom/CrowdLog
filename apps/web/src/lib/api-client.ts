@@ -28,6 +28,26 @@ export type CreateEventPayload = {
   >;
 };
 
+export type UpdateEventPayload = Omit<
+  CreateEventPayload,
+  "eventDate" | "fields"
+> & {
+  eventDate?: string | null;
+  fields: Array<
+    Pick<
+      TemplateField,
+      | "id"
+      | "label"
+      | "key"
+      | "type"
+      | "required"
+      | "sortOrder"
+      | "aliases"
+      | "options"
+    >
+  >;
+};
+
 export type SignInPayload = {
   email: string;
   name?: string;
@@ -61,6 +81,16 @@ export async function getEvent(eventId: string) {
 export async function createEvent(payload: CreateEventPayload) {
   return request<CrowdLogEvent>("/events", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateEvent(
+  eventId: string,
+  payload: UpdateEventPayload,
+) {
+  return request<CrowdLogEvent>(`/events/${eventId}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }

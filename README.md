@@ -38,6 +38,8 @@ The current app lets a user:
 - save event templates through the NestJS API and Prisma
 - sign in and sign out with a local email-based session
 - load saved events from the database
+- edit existing owner-managed events and their default template fields from the
+  builder instead of creating duplicates
 - delete saved events
 - scope events, uploads, extraction, and review records to the signed-in user
 - create owner memberships for new events
@@ -55,6 +57,7 @@ The current app lets a user:
 - send reviewer invitation emails through Resend when configured
 - send reviewer invitation emails through Postmark when configured
 - send reviewer invitation emails through SendGrid when configured
+- send reviewer invitation emails through SMTP when configured
 - keep reviewer creation successful if invitation delivery fails
 - open invited events from `?eventId=...` links after the reviewer signs in
 - run a mock table extraction for a saved event
@@ -68,14 +71,17 @@ The current app lets a user:
 - choose full-document PDF OCR for cloud-capable providers with
   `OCR_PDF_RENDER_MODE="full-document"`
 - automatically use provider-native full-document PDF OCR in `auto` mode when
-  Azure is configured or the HTTP bridge opts in
+  Azure, Google Document AI, or an opted-in HTTP bridge is configured
 - record PDF rendering skip or fallback reasons in raw OCR metadata
 - mark failed extraction attempts with sanitized diagnostic raw OCR metadata
 - preserve sanitized provider fallback failures when `auto` mode recovers
 - expose a read-only OCR deployment check for provider, direct-PDF, and PDF
   renderer readiness
-- run a credentialed Azure/Google/HTTP OCR smoke-check script against local
-  sample documents without printing extracted attendance values
+- run a credentialed Azure/Google Document AI/Google Vision/AWS Textract/HTTP OCR
+  smoke-check script against local sample documents without printing extracted
+  attendance values
+- write sanitized OCR smoke-check summary artifacts for repeated provider
+  comparisons without storing extracted attendance values
 - choose table-row or form-entry extraction layout for selected documents
 - run form-style mock fallback extraction into reviewed records
 - parse label/value form layouts through Windows OCR for image inputs and
@@ -100,6 +106,13 @@ The current app lets a user:
 - send OCR extraction requests to Google Document AI when configured
 - map Google Document AI tables and form fields into reviewed records with
   bounding boxes and suggested fields for unmapped columns
+- send OCR extraction requests to Google Vision when configured
+- map Google Vision document-text OCR into reviewed table rows or simple
+  label/value form rows, with bounding boxes and suggested fields for unmapped
+  table columns
+- send OCR extraction requests to AWS Textract when configured
+- map AWS Textract table and key-value form blocks into reviewed records with
+  bounding boxes and suggested fields for unmapped table columns
 - replace uploaded attendance sheets and clear their old extracted rows
 - delete uploaded attendance sheets with their extracted rows and local files
 - suggest missing template fields from OCR-detected sheet columns
@@ -129,8 +142,8 @@ The current app lets a user:
 - capture portfolio screenshots with a Chrome/Edge headless script
 - store the captured five-image portfolio screenshot gallery in `docs/screenshots`
 
-There is no Google Vision adapter, AWS Textract adapter, external auth
-provider, SMTP email adapter, external export API, or advanced analytics yet.
+There is no external auth provider, external export API, or advanced analytics
+yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -156,8 +169,8 @@ language as the frontend.
 - Styling: Tailwind CSS
 - Storage: local file storage first, cloud storage later
 - OCR: local Windows OCR for image uploads, Azure Document Intelligence, Google
-  Document AI, generic HTTP OCR endpoint, mock OCR fallback, additional
-  vendor-specific cloud OCR later
+  Document AI, Google Vision, AWS Textract, generic HTTP OCR endpoint, mock OCR
+  fallback, additional vendor-specific cloud OCR later
 
 ## Current Architecture
 
@@ -391,19 +404,21 @@ packages/shared/src/template-utils.ts
 37. Add first OCR deployment readiness check. Done for configuration smoke
     checks:
     `GET /health/ocr` now reports the selected OCR mode, mock fallback setting,
-    Azure/Google/HTTP configuration readiness, direct-PDF support, `pdftoppm`
-    availability, and the effective PDF extraction path without exposing
-    provider secrets. Focused API tests cover direct-PDF readiness, renderer
-    readiness, secret redaction, and the health controller.
+    Azure/Google Document AI/Google Vision/AWS Textract/HTTP configuration
+    readiness, direct-PDF support, `pdftoppm` availability, and the effective
+    PDF extraction path without exposing provider secrets. Focused API tests
+    cover direct-PDF readiness, renderer readiness, secret redaction, and the
+    health controller.
 38. Add repeatable real-provider OCR smoke checks. Done for the runner:
-    `npm run smoke:ocr` builds the API and runs either the Azure Document
-    Intelligence adapter or the generic HTTP OCR bridge against a local sample
-    PDF/image when credentials are available. The runner accepts smoke-specific
-    template fields, layout, row-count, and PDF page-range options, then prints
-    a privacy-preserving summary with row counts, field coverage, confidence,
-    issue counts, and suggested field metadata instead of extracted cell values.
-    Focused tests cover smoke input construction, provider setup validation,
-    file-type inference, and summary redaction.
+    `npm run smoke:ocr` builds the API and runs Azure Document Intelligence,
+    Google Document AI, Google Vision, AWS Textract, or the generic HTTP OCR
+    bridge against a local sample PDF/image when credentials are available. The
+    runner accepts smoke-specific template fields, layout, row-count, and PDF
+    page-range options, then prints a privacy-preserving summary with row
+    counts, field coverage, confidence, issue counts, and suggested field
+    metadata instead of extracted cell values. Focused tests cover smoke input
+    construction, provider setup validation, file-type inference, and summary
+    redaction.
 39. Add another vendor-specific cloud OCR adapter. Done for Google Document AI:
     `OCR_PROVIDER="google"` now posts local uploaded document bytes to the
     Google Document AI online processing API, maps table rows and form fields
@@ -415,6 +430,53 @@ packages/shared/src/template-utils.ts
     configuration. Focused OCR tests cover request payloads, table mapping, form
     field mapping, direct-PDF capability, explicit provider selection, and smoke
     runner validation.
+40. Add another vendor-specific cloud OCR adapter. Done for Google Vision:
+    `OCR_PROVIDER="google-vision"` now posts local image bytes to the Google
+    Vision `images:annotate` REST API using dense document-text detection, maps
+    OCR word geometry into table rows or simple label/value form rows,
+    normalizes values by field type, preserves bounding boxes, and returns
+    suggested fields for unmapped table columns. In `auto` mode, CrowdLog can
+    try Google Vision for image inputs or rendered PDF pages after Azure and
+    Google Document AI, and before the generic HTTP bridge, when Google Vision
+    credentials are configured. The OCR readiness check and smoke-check runner
+    now include Google Vision configuration. Focused OCR tests cover request
+    payloads, table mapping, form mapping, explicit provider selection,
+    auto-mode routing, readiness reporting, and smoke-runner validation.
+41. Add another vendor-specific cloud OCR adapter. Done for AWS Textract:
+    `OCR_PROVIDER="aws-textract"` now signs and posts local uploaded document
+    bytes to Textract `AnalyzeDocument`, maps table cells and key-value form
+    blocks back onto saved template fields, normalizes values by field type,
+    preserves normalized bounding boxes, and returns suggested fields for
+    unmapped table columns. In `auto` mode, CrowdLog can try AWS Textract after
+    Azure and Google Document AI and before Google Vision or the generic HTTP
+    bridge when AWS credentials are configured. The OCR readiness check and
+    smoke-check runner now include AWS Textract configuration. Focused OCR tests
+    cover request signing, table mapping, form mapping, direct-PDF capability,
+    explicit provider selection, auto-mode routing, readiness reporting, and
+    smoke-runner validation.
+42. Add editing for saved events and templates. Done for owner-managed events:
+    owners can load a saved event into the builder, change event metadata,
+    rename/reorder/add/remove fields on the default attendance template, and
+    save those changes back through `PATCH /events/:eventId`. Existing template
+    field ids are preserved when possible, and existing review-row JSON is
+    migrated when a field key is renamed so old values still show under the new
+    field. Focused API tests cover owner updates, reviewer denial, and duplicate
+    field-key validation.
+43. Add OCR smoke-check summary artifacts. Done for repeated provider checks:
+    `npm run smoke:ocr` now accepts `OCR_SMOKE_SUMMARY_FILE`, creates parent
+    directories when needed, and writes the same sanitized JSON summary that is
+    printed to the terminal. The artifact keeps row counts, field coverage,
+    confidence, issue counts, and suggested-field counts while omitting
+    extracted cell values and suggested-field sample values. Focused smoke-runner
+    tests cover config parsing and artifact redaction.
+44. Add SMTP transactional email delivery. Done:
+    `InvitationEmailService` now supports
+    `INVITATION_EMAIL_PROVIDER="smtp"`, sends reviewer invitation emails through
+    a configured SMTP host, supports shared sender/reply-to settings, optional
+    username/password authentication, implicit TLS, optional or required
+    STARTTLS, and configurable timeouts. Focused API tests cover SMTP command
+    flow, MIME headers, auth, provider result metadata, and required
+    configuration validation.
 
 ## API Routes Implemented
 
@@ -428,6 +490,7 @@ POST  /auth/sign-out
 GET   /events
 POST  /events
 GET   /events/:eventId
+PATCH /events/:eventId
 DELETE /events/:eventId
 POST  /events/:eventId/members
 PATCH /events/:eventId/members/:memberId
@@ -637,6 +700,15 @@ INVITATION_EMAIL_RESEND_ENDPOINT="https://api.resend.com/emails"
 INVITATION_EMAIL_POSTMARK_ENDPOINT="https://api.postmarkapp.com/email"
 INVITATION_EMAIL_POSTMARK_MESSAGE_STREAM="outbound"
 INVITATION_EMAIL_SENDGRID_ENDPOINT="https://api.sendgrid.com/v3/mail/send"
+INVITATION_EMAIL_SMTP_HOST="smtp.example.com"
+INVITATION_EMAIL_SMTP_PORT="587"
+INVITATION_EMAIL_SMTP_USERNAME=""
+INVITATION_EMAIL_SMTP_PASSWORD=""
+INVITATION_EMAIL_SMTP_SECURE="false"
+INVITATION_EMAIL_SMTP_STARTTLS="auto"
+INVITATION_EMAIL_SMTP_HELO_NAME="crowdlog.local"
+INVITATION_EMAIL_SMTP_REJECT_UNAUTHORIZED="true"
+INVITATION_EMAIL_SMTP_TIMEOUT_MS="30000"
 ```
 
 - `console` logs the invitation message to the API process. This is the default.
@@ -646,6 +718,7 @@ INVITATION_EMAIL_SENDGRID_ENDPOINT="https://api.sendgrid.com/v3/mail/send"
 - `resend` sends the invitation email through the Resend email API.
 - `postmark` sends the invitation email through the Postmark email API.
 - `sendgrid` sends the invitation email through the SendGrid Mail Send API.
+- `smtp` sends the invitation email through a configured SMTP server.
 - `off` disables invitation delivery.
 
 `CROWDLOG_APP_URL` controls the link used in the email. If it is not set, the
@@ -675,7 +748,14 @@ email address or `Name <email@example.com>`. `INVITATION_EMAIL_SENDGRID_ENDPOINT
 defaults to `https://api.sendgrid.com/v3/mail/send` and is mainly useful for
 tests or private gateways.
 
-There is no SMTP adapter yet.
+When using `smtp`, set `INVITATION_EMAIL_SMTP_HOST` and
+`INVITATION_EMAIL_FROM`. `INVITATION_EMAIL_SMTP_PORT` defaults to `587`, or
+`465` when `INVITATION_EMAIL_SMTP_SECURE="true"`. Set
+`INVITATION_EMAIL_SMTP_USERNAME` and `INVITATION_EMAIL_SMTP_PASSWORD` together
+when the SMTP server requires authentication. `INVITATION_EMAIL_SMTP_STARTTLS`
+accepts `auto`, `required`, or `off`; `auto` upgrades when the server advertises
+STARTTLS. `INVITATION_EMAIL_SMTP_REJECT_UNAUTHORIZED="false"` is available for
+private test servers with self-signed certificates.
 
 ## OCR Providers
 
@@ -705,6 +785,18 @@ GOOGLE_DOCUMENT_AI_ACCESS_TOKEN=""
 GOOGLE_DOCUMENT_AI_ENDPOINT=""
 GOOGLE_DOCUMENT_AI_FIELD_MASK=""
 GOOGLE_DOCUMENT_AI_SKIP_HUMAN_REVIEW="true"
+GOOGLE_VISION_API_KEY=""
+GOOGLE_VISION_ACCESS_TOKEN=""
+GOOGLE_VISION_ENDPOINT=""
+GOOGLE_VISION_FEATURE_TYPE="DOCUMENT_TEXT_DETECTION"
+GOOGLE_VISION_MODEL=""
+GOOGLE_VISION_LANGUAGE_HINTS=""
+AWS_TEXTRACT_REGION="us-east-1"
+AWS_TEXTRACT_ACCESS_KEY_ID=""
+AWS_TEXTRACT_SECRET_ACCESS_KEY=""
+AWS_TEXTRACT_SESSION_TOKEN=""
+AWS_TEXTRACT_ENDPOINT=""
+AWS_TEXTRACT_FEATURE_TYPES=""
 OCR_HTTP_ENDPOINT="https://ocr-provider.example/extract"
 OCR_HTTP_BEARER_TOKEN=""
 OCR_HTTP_INCLUDE_FILE="true"
@@ -713,12 +805,15 @@ OCR_HTTP_DIRECT_PDF="false"
 
 - `auto` uses local Windows OCR for uploaded image files on Windows, then tries
   Azure Document Intelligence when configured, then Google Document AI when
-  configured, then falls back to the configured HTTP OCR endpoint when
-  available, then mock rows.
+  configured, then AWS Textract when configured, then Google Vision for image
+  inputs or rendered PDF pages when configured, then falls back to the
+  configured HTTP OCR endpoint when available, then mock rows.
 - `mock` always generates mock rows.
 - `windows` requires local Windows OCR for uploaded image files.
 - `azure` sends local uploaded documents to Azure Document Intelligence.
 - `google` sends local uploaded documents to Google Document AI.
+- `google-vision` sends local image documents to Google Vision.
+- `aws-textract` sends local uploaded documents to AWS Textract.
 - `http` sends a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
 
 When `OCR_PROVIDER="azure"`, set `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` and
@@ -755,6 +850,43 @@ pairs into a single reviewed form-entry row. Values still pass through the
 existing CrowdLog normalization and validation flow. Unmapped Google table
 columns can also be returned as `suggestedFields` for template follow-up.
 
+When `OCR_PROVIDER="google-vision"`, set either `GOOGLE_VISION_API_KEY` or
+`GOOGLE_VISION_ACCESS_TOKEN`. Optional settings include
+`GOOGLE_VISION_ENDPOINT` for regional endpoints such as
+`https://us-vision.googleapis.com`, `GOOGLE_VISION_FEATURE_TYPE` when a
+deployment wants to override the default `DOCUMENT_TEXT_DETECTION`,
+`GOOGLE_VISION_MODEL`, and comma-separated `GOOGLE_VISION_LANGUAGE_HINTS`.
+The adapter sends local image bytes as base64 to the Vision `images:annotate`
+REST API. It does not advertise native PDF support, so uploaded PDFs should use
+page rendering unless another direct-PDF provider is selected.
+
+Google Vision document-text OCR is mapped into CrowdLog review rows by grouping
+recognized words into table rows, matching header spans against field keys,
+labels, aliases, and common attendance terms, then assigning body words to the
+nearest mapped column. For `layout: "form"`, simple same-line or next-line
+label/value pairs can map into a single reviewed form-entry row. Values still
+pass through the existing CrowdLog normalization and validation flow. Unmapped
+Vision table columns can also be returned as `suggestedFields` for template
+follow-up.
+
+When `OCR_PROVIDER="aws-textract"`, set `AWS_TEXTRACT_REGION`,
+`AWS_TEXTRACT_ACCESS_KEY_ID`, and `AWS_TEXTRACT_SECRET_ACCESS_KEY`. The adapter
+also accepts the standard `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and
+`AWS_SECRET_ACCESS_KEY` names. Optional settings include
+`AWS_TEXTRACT_SESSION_TOKEN` for temporary credentials,
+`AWS_TEXTRACT_ENDPOINT` for custom gateways, and comma-separated
+`AWS_TEXTRACT_FEATURE_TYPES` to override the default `TABLES,FORMS` or
+`FORMS,SIGNATURES` feature choices. The adapter signs direct REST requests with
+AWS Signature Version 4 and calls Textract `AnalyzeDocument`.
+
+AWS Textract table rows are mapped into CrowdLog review rows by following
+Textract `TABLE` -> `CELL` -> `WORD` block relationships, then matching header
+cells against field keys, labels, aliases, and common attendance terms. For
+`layout: "form"`, Textract `KEY_VALUE_SET` blocks can map form key/value pairs
+into a single reviewed form-entry row. Values still pass through the existing
+CrowdLog normalization and validation flow. Unmapped Textract table columns can
+also be returned as `suggestedFields` for template follow-up.
+
 When `OCR_HTTP_ENDPOINT` is set, the HTTP OCR provider posts document metadata,
 base64 file content, template fields, and extraction options to the endpoint.
 `OCR_HTTP_BEARER_TOKEN` adds an `Authorization: Bearer ...` header.
@@ -767,10 +899,12 @@ For uploaded PDFs, extraction now accepts a page range. The backend estimates
 the PDF page count from the local uploaded file and clamps the requested range
 before calling the OCR provider. In `auto` render mode, CrowdLog first lets
 provider-native PDF readers handle the full document when available, such as
-configured Azure Document Intelligence, configured Google Document AI, or an
-HTTP bridge with `OCR_HTTP_DIRECT_PDF="true"`. Otherwise, when `pdftoppm` is
-available, the backend renders the selected PDF pages to temporary PNG files
-and sends each page through the configured OCR provider. Set
+configured Azure Document Intelligence, configured Google Document AI,
+configured AWS Textract, or an HTTP bridge with `OCR_HTTP_DIRECT_PDF="true"`.
+Google Vision is image-oriented, so it participates in PDF extraction through
+rendered pages. Otherwise, when `pdftoppm` is available, the backend renders
+the selected PDF pages to temporary PNG files and sends each page through the
+configured OCR provider. Set
 `OCR_PDF_RENDER_MODE="full-document"` to force direct PDF OCR, or
 `OCR_PDF_RENDER_MODE="render-pages"` to force page rendering. If rendering is
 skipped or unavailable, CrowdLog sends the full PDF to the OCR provider and
@@ -787,18 +921,22 @@ fallback failure messages alongside the provider result.
 
 For deployment readiness checks, `GET /health/ocr` returns a read-only OCR
 configuration summary: selected provider mode, mock fallback setting,
-Azure/Google/HTTP configuration booleans, direct-PDF support, `pdftoppm`
-availability, and whether PDF extraction is ready, degraded, or not configured.
-It does not run a provider network call or expose API keys.
+Azure/Google Document AI/Google Vision/AWS Textract/HTTP configuration
+booleans, direct-PDF support, `pdftoppm` availability, and whether PDF
+extraction is ready, degraded, or not configured. It does not run a provider
+network call or expose API keys.
 
 For credentialed provider smoke checks, run `npm run smoke:ocr` after setting
-`OCR_SMOKE_PROVIDER` to `azure`, `google`, or `http` and `OCR_SMOKE_FILE` to a
-local sample PDF or image. The runner builds the API, calls the selected
-provider directly, and prints a summary that omits extracted cell values so real
-attendance data does not land in terminal logs. Optional smoke variables include
+`OCR_SMOKE_PROVIDER` to `azure`, `google`, `google-vision`, `aws-textract`, or
+`http` and `OCR_SMOKE_FILE` to a local sample PDF or image. The runner builds
+the API, calls the selected provider directly, and prints a summary that omits
+extracted cell values so real attendance data does not land in terminal logs.
+Optional smoke variables include
 `OCR_SMOKE_LAYOUT`, `OCR_SMOKE_ROW_COUNT`, `OCR_SMOKE_PAGE_START`,
 `OCR_SMOKE_PAGE_COUNT`, `OCR_SMOKE_TOTAL_PAGES`, `OCR_SMOKE_REQUIRE_ROWS`, and
 `OCR_SMOKE_FIELDS_JSON` for matching the sample sheet's template.
+`OCR_SMOKE_SUMMARY_FILE` can also write the sanitized summary to a JSON file for
+repeatable provider comparisons.
 
 Extraction also accepts a layout hint: `table` for attendance rows or `form`
 for form-entry sheets. The mock fallback can generate form-style extracted
@@ -848,32 +986,35 @@ Intelligence adapter, wrapped-value/signature-checkbox form OCR pass, first
 select checkbox-group parser, first handwritten signature-region pass, first
 production PDF hardening pass, richer multi-select checkbox preservation, true
 multi-select template fields, split-stroke signature-region pass,
-provider-native PDF auto routing, direct-PDF failure diagnostics, and the first
-OCR deployment readiness check are complete for the current app shape. A
-repeatable Azure/Google/HTTP OCR smoke-check runner and a Google Document AI
-adapter are also in place for credentialed deployment environments. SMTP can
-stay as an optional backlog item unless a deployment specifically needs it.
+provider-native PDF auto routing, direct-PDF failure diagnostics, the first
+OCR deployment readiness check, saved event/template editing, and sanitized
+smoke-check summary artifacts are complete for the current app shape. A
+repeatable Azure/Google Document AI/Google
+Vision/AWS Textract/HTTP OCR smoke-check runner, a Google Document AI adapter,
+a Google Vision adapter, and an AWS Textract adapter are also in place for
+credentialed deployment environments. Google Vision is image-oriented for
+uploaded images and rendered PDF pages, while AWS Textract can handle table and
+key-value form blocks through `AnalyzeDocument`.
 
-1. Run `npm run smoke:ocr` against real Azure/Google/HTTP credentials and
-   sample PDFs when a deployment environment is available, then capture any
-   provider-specific mapping or fallback issues that appear.
-2. Add more vendor-specific OCR adapters, such as Google Vision or AWS Textract,
-   if a deployment needs them.
+1. Run `npm run smoke:ocr` against real Azure/Google Document AI/Google
+   Vision/AWS Textract/HTTP credentials and sample documents when a deployment
+   environment is available, then capture any provider-specific mapping or
+   fallback issues that appear.
+2. Add more vendor-specific OCR adapters only if a deployment needs another
+   vendor.
 3. Continue broader form-layout OCR only when real sheets expose new layout
    patterns.
 
 ## Still Left To Build
 
 - Additional vendor-specific cloud OCR adapters beyond Azure Document
-  Intelligence, Google Document AI, and the generic HTTP OCR bridge.
+  Intelligence, Google Document AI, Google Vision, AWS Textract, and the
+  generic HTTP OCR bridge.
 - Broader form-layout OCR parsing beyond wrapped values, signature checkboxes,
   true multi-select checkbox groups, split signature stroke clusters, and simple
   signature-region marks.
 - Further production PDF OCR hardening, especially repeated real-provider smoke
   checks and vendor-specific fallback behavior.
-- Editing existing events/templates instead of only creating new ones.
-- SMTP transactional email delivery beyond the current
-  console/file/http/Resend/Postmark/SendGrid invitation providers.
 - Advanced analytics and reporting dashboards.
 - Broader automated tests.
 - Breaking the large frontend component into smaller components.
@@ -906,6 +1047,8 @@ Already done:
 - Prisma schema and first migration
 - Event/template/template-field API
 - Frontend event/template builder
+- Owner-managed saved events can be loaded into the builder and updated in
+  place, including event metadata and default template fields
 - Saved event deletion
 - Mock OCR extraction
 - Editable review table
@@ -924,8 +1067,9 @@ Already done:
   sanitized diagnostic raw OCR metadata; auto-mode provider fallback failures
   are preserved when extraction recovers through another provider or mock rows
 - `GET /health/ocr` reports OCR provider mode, direct-PDF support,
-  Azure/Google/HTTP configuration readiness, `pdftoppm` availability, and the
-  effective PDF extraction path without exposing provider secrets
+  Azure/Google Document AI/Google Vision/AWS Textract/HTTP configuration
+  readiness, `pdftoppm` availability, and the effective PDF extraction path
+  without exposing provider secrets
 - Document extraction can request table-row or form-entry layout, with form-style mock fallback rows
 - Windows OCR can parse first-pass form label/value layouts, normalize the
   extracted values by field type, include bounding boxes, and split repeated
@@ -957,18 +1101,33 @@ Already done:
   and form fields into saved template fields, preserve bounding boxes, return
   suggested fields for unmapped columns, and run before the generic HTTP bridge
   in `auto` mode when Google credentials are configured
-- `npm run smoke:ocr` can run a credentialed Azure, Google, or HTTP OCR provider
-  smoke check against a local sample PDF/image and prints row counts, field
-  coverage, confidence, issue counts, and suggested field metadata without
-  printing extracted cell values
+- `OCR_PROVIDER="google-vision"` can send local image documents or rendered PDF
+  pages to Google Vision `images:annotate`, map dense document-text OCR into
+  table rows or simple label/value form rows, preserve bounding boxes, return
+  suggested fields for unmapped columns, and run before the generic HTTP bridge
+  in `auto` mode when Google Vision credentials are configured
+- `OCR_PROVIDER="aws-textract"` can send local uploaded documents to AWS
+  Textract `AnalyzeDocument`, sign REST requests with AWS Signature Version 4,
+  map table cells and key-value form blocks into saved template fields,
+  preserve bounding boxes, return suggested fields for unmapped columns, and
+  run before Google Vision and the generic HTTP bridge in `auto` mode when AWS
+  credentials are configured
+- `npm run smoke:ocr` can run a credentialed Azure, Google Document AI, Google
+  Vision, AWS Textract, or HTTP OCR provider smoke check against a local sample
+  PDF/image and prints row counts, field coverage, confidence, issue counts,
+  and suggested field metadata without printing extracted cell values
+- `OCR_SMOKE_SUMMARY_FILE` can save that sanitized smoke-check summary as a JSON
+  artifact for comparing repeated provider runs without extracted attendance
+  values
 - Uploaded documents can be replaced or deleted, with extracted rows and local files cleaned up
 - OCR can suggest missing uploaded sheet columns, such as `taxa`
 - Windows OCR can map columns using labels, keys, aliases, and common header variants
 - Windows OCR can clean and validate extracted values by field type and lower confidence for suspicious cells
 - Review cells show OCR validation issue text
 - Focused OCR normalization, Windows form-layout, HTTP OCR provider, Azure
-  Document Intelligence provider, Google Document AI provider, OCR deployment
-  readiness, and OCR smoke-runner tests can run with `npm run test:ocr`
+  Document Intelligence provider, Google Document AI provider, Google Vision
+  provider, AWS Textract provider, OCR deployment readiness, and OCR
+  smoke-runner tests can run with `npm run test:ocr`
 - Windows OCR has low-resolution glyph cleanup and adaptive row/column grouping
 - Local email sign-in/sign-out uses HTTP-only sessions
 - Events, documents, extraction, and records are protected by owner/member access
@@ -983,7 +1142,7 @@ Already done:
   sign-in, role counts, grouped roster sections, owner-only add/remove controls,
   promotion/demotion controls, and links back to the review workspace
 - Adding a new reviewer queues invitation email copy through a
-  console/file/http/Resend/Postmark/SendGrid/off provider boundary
+  console/file/http/Resend/Postmark/SendGrid/SMTP/off provider boundary
 - The HTTP invitation provider posts a provider-neutral JSON payload to an
   external delivery endpoint and supports an optional bearer token
 - The Resend invitation provider sends real reviewer invitation emails through
@@ -992,13 +1151,17 @@ Already done:
   through the Postmark email API with optional message-stream routing
 - The SendGrid invitation provider sends real reviewer invitation emails
   through the SendGrid Mail Send API with structured sender parsing
+- The SMTP invitation provider sends real reviewer invitation emails through a
+  configured SMTP host with optional auth, STARTTLS, implicit TLS, and shared
+  sender/reply-to settings
 - Reviewer membership creation remains successful if invitation delivery fails
 - Invitation links include `?eventId=...`, and the frontend opens invited events
   after sign-in when the account has access
-- Owners manage reviewers, event deletion, templates, and suggested OCR fields
+- Owners manage reviewers, event deletion, existing event/template edits, and
+  suggested OCR fields
 - Reviewers can access the event workspace and review extracted rows
 - Approved/rejected rows track the reviewer and reviewed time for reporting
-- Focused API tests cover auth sessions, protected guards, owner-only actions, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, OCR deployment readiness, OCR smoke-runner behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, Google Document AI provider behavior, and OCR normalization
+- Focused API tests cover auth sessions, protected guards, owner-only actions, event/template edits, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, SMTP delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, OCR deployment readiness, OCR smoke-runner behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, Google Document AI provider behavior, Google Vision provider behavior, AWS Textract provider behavior, and OCR normalization
 - Run the focused API suite with `npm run test:api`
 - Review workspace has client-side search, status filters, summary counts, reporting panels, visible-row CSV export, and server-side full-event CSV/Excel export
 - Portfolio case study and screenshot guide live in `docs/`
@@ -1007,7 +1170,7 @@ Already done:
 - The five captured portfolio screenshots are stored in `docs/screenshots`
 
 Current next phase:
-The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, Google Document AI adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, first OCR deployment readiness check, repeatable Azure/Google/HTTP OCR smoke-check runner, reviewable multi-select checkbox preservation, and true multi-select template fields are complete for now. Continue with OCR/document depth: run `npm run smoke:ocr` against real Azure/Google/HTTP credentials and sample PDFs when available, add additional vendor-specific adapters such as Google Vision or AWS Textract if a deployment needs them, or broaden form-layout parsing when real sheets expose new patterns. SMTP remains an optional backlog adapter only if a deployment needs it.
+The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, Google Document AI adapter, Google Vision adapter, AWS Textract adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, first OCR deployment readiness check, repeatable Azure/Google Document AI/Google Vision/AWS Textract/HTTP OCR smoke-check runner, sanitized smoke-check summary artifacts, reviewable multi-select checkbox preservation, true multi-select template fields, SMTP invitation delivery, and saved event/template editing are complete for now. Continue with OCR/document depth: run `npm run smoke:ocr` against real Azure/Google Document AI/Google Vision/AWS Textract/HTTP credentials and sample documents when available, add additional vendor-specific adapters only if a deployment needs another vendor, or broaden form-layout parsing when real sheets expose new patterns.
 
 Please inspect the repo first, avoid reading .env secrets, then continue from the OCR/document depth phase.
 ```

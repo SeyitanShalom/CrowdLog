@@ -31,11 +31,29 @@ export class OcrDeploymentCheckService {
       endpointConfigured: this.hasEnv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"),
       keyConfigured: this.hasEnv("AZURE_DOCUMENT_INTELLIGENCE_KEY"),
     };
+    const awsTextract = {
+      accessKeyConfigured:
+        this.hasEnv("AWS_TEXTRACT_ACCESS_KEY_ID") ||
+        this.hasEnv("AWS_ACCESS_KEY_ID"),
+      secretKeyConfigured:
+        this.hasEnv("AWS_TEXTRACT_SECRET_ACCESS_KEY") ||
+        this.hasEnv("AWS_SECRET_ACCESS_KEY"),
+      regionConfigured:
+        this.hasEnv("AWS_TEXTRACT_REGION") ||
+        this.hasEnv("AWS_REGION") ||
+        this.hasEnv("AWS_DEFAULT_REGION"),
+      endpointConfigured: this.hasEnv("AWS_TEXTRACT_ENDPOINT"),
+    };
     const google = {
       projectConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_PROJECT_ID"),
       locationConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_LOCATION"),
       processorConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_PROCESSOR_ID"),
       accessTokenConfigured: this.hasEnv("GOOGLE_DOCUMENT_AI_ACCESS_TOKEN"),
+    };
+    const googleVision = {
+      apiKeyConfigured: this.hasEnv("GOOGLE_VISION_API_KEY"),
+      accessTokenConfigured: this.hasEnv("GOOGLE_VISION_ACCESS_TOKEN"),
+      endpointConfigured: this.hasEnv("GOOGLE_VISION_ENDPOINT"),
     };
     const http = {
       endpointConfigured: this.hasEnv("OCR_HTTP_ENDPOINT"),
@@ -52,6 +70,10 @@ export class OcrDeploymentCheckService {
     });
     const checks = this.checks({
       azureConfigured: azure.endpointConfigured && azure.keyConfigured,
+      awsTextractConfigured:
+        awsTextract.accessKeyConfigured &&
+        awsTextract.secretKeyConfigured &&
+        awsTextract.regionConfigured,
       directPdfSupported,
       fallbackToMock,
       googleConfigured:
@@ -59,6 +81,8 @@ export class OcrDeploymentCheckService {
         google.locationConfigured &&
         google.processorConfigured &&
         google.accessTokenConfigured,
+      googleVisionConfigured:
+        googleVision.apiKeyConfigured || googleVision.accessTokenConfigured,
       httpConfigured: http.endpointConfigured,
       httpDirectPdfReady: http.endpointConfigured && http.directPdfEnabled,
       pdfExtractionPath,
@@ -84,6 +108,13 @@ export class OcrDeploymentCheckService {
           ...azure,
           configured: azure.endpointConfigured && azure.keyConfigured,
         },
+        awsTextract: {
+          ...awsTextract,
+          configured:
+            awsTextract.accessKeyConfigured &&
+            awsTextract.secretKeyConfigured &&
+            awsTextract.regionConfigured,
+        },
         google: {
           ...google,
           configured:
@@ -91,6 +122,12 @@ export class OcrDeploymentCheckService {
             google.locationConfigured &&
             google.processorConfigured &&
             google.accessTokenConfigured,
+        },
+        googleVision: {
+          ...googleVision,
+          configured:
+            googleVision.apiKeyConfigured ||
+            googleVision.accessTokenConfigured,
         },
         http: {
           ...http,
@@ -104,9 +141,11 @@ export class OcrDeploymentCheckService {
 
   private checks({
     azureConfigured,
+    awsTextractConfigured,
     directPdfSupported,
     fallbackToMock,
     googleConfigured,
+    googleVisionConfigured,
     httpConfigured,
     httpDirectPdfReady,
     pdfExtractionPath,
@@ -114,9 +153,11 @@ export class OcrDeploymentCheckService {
     renderer,
   }: {
     azureConfigured: boolean;
+    awsTextractConfigured: boolean;
     directPdfSupported: boolean;
     fallbackToMock: boolean;
     googleConfigured: boolean;
+    googleVisionConfigured: boolean;
     httpConfigured: boolean;
     httpDirectPdfReady: boolean;
     pdfExtractionPath: DeploymentCheck;
@@ -132,6 +173,13 @@ export class OcrDeploymentCheckService {
           : "Azure Document Intelligence is not fully configured.",
       },
       {
+        name: "aws_textract_configuration",
+        status: awsTextractConfigured ? "ready" : "not_configured",
+        message: awsTextractConfigured
+          ? "AWS Textract credentials and region are configured."
+          : "AWS Textract access key, secret key, or region is not configured.",
+      },
+      {
         name: "http_configuration",
         status: httpConfigured ? "ready" : "not_configured",
         message: httpConfigured
@@ -144,6 +192,13 @@ export class OcrDeploymentCheckService {
         message: googleConfigured
           ? "Google Document AI project, location, processor, and access token are configured."
           : "Google Document AI is not fully configured.",
+      },
+      {
+        name: "google_vision_configuration",
+        status: googleVisionConfigured ? "ready" : "not_configured",
+        message: googleVisionConfigured
+          ? "Google Vision API authentication is configured."
+          : "Google Vision API key or access token is not configured.",
       },
       {
         name: "http_direct_pdf",
@@ -293,6 +348,10 @@ export class OcrDeploymentCheckService {
       )
       .replace(
         /((?:api[_-]?key|subscription[_-]?key|token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      )
+      .replace(
+        /((?:aws[_-]?)?(?:access[_-]?key[_-]?id|secret[_-]?access[_-]?key)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
         "$1[redacted]",
       )
       .slice(0, 300);

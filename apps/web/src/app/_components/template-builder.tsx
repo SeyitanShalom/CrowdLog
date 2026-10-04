@@ -44,9 +44,11 @@ import {
   signIn as apiSignIn,
   signOut as apiSignOut,
   updateAttendanceRecord,
+  updateEvent,
   updateEventMember,
   uploadAttendanceDocument,
   type CreateEventPayload,
+  type UpdateEventPayload,
 } from "@/lib/api-client";
 
 const FIELD_TYPE_LABELS: Record<FieldType, string> = {
@@ -615,6 +617,7 @@ export function TemplateBuilder() {
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [savedEvents, setSavedEvents] = useState<CrowdLogEvent[]>([]);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<StatusMessage>(null);
@@ -692,6 +695,7 @@ export function TemplateBuilder() {
 
           if (requestedEvent) {
             setDraft(eventToDraft(requestedEvent));
+            setEditingEventId(requestedEvent.id);
             setReviewEvent(requestedEvent);
             setIsLoadingRecords(true);
             setIsLoadingDocuments(true);
@@ -803,6 +807,20 @@ export function TemplateBuilder() {
     count: templateFields.filter((field) => field.type === type).length,
   })).filter((entry) => entry.count > 0);
   const canManageReviewEvent = canManageEvent(reviewEvent, currentUser);
+  const editingEvent = useMemo(() => {
+    if (!editingEventId) {
+      return null;
+    }
+
+    return (
+      savedEvents.find((event) => event.id === editingEventId) ??
+      (reviewEvent?.id === editingEventId ? reviewEvent : null)
+    );
+  }, [editingEventId, reviewEvent, savedEvents]);
+  const isEditingExistingEvent = editingEventId !== null;
+  const canSaveDraft =
+    !isEditingExistingEvent ||
+    (editingEvent ? canManageEvent(editingEvent, currentUser) : false);
 
   async function signIn() {
     const email = authDraft.email.trim();
@@ -832,6 +850,7 @@ export function TemplateBuilder() {
 
       if (requestedEvent) {
         setDraft(eventToDraft(requestedEvent));
+        setEditingEventId(requestedEvent.id);
         await selectReviewEvent(requestedEvent);
       } else if (shouldOpenPortfolioDemo()) {
         setStatus(portfolioDemoMissingStatus());
@@ -859,6 +878,7 @@ export function TemplateBuilder() {
     } finally {
       setCurrentUser(null);
       setSavedEvents([]);
+      setEditingEventId(null);
       setReviewEvent(null);
       setDocuments([]);
       setSelectedDocumentId("");
@@ -987,13 +1007,56 @@ export function TemplateBuilder() {
       return;
     }
 
-    const payload: CreateEventPayload = {
+    if (isEditingExistingEvent && !editingEvent) {
+      setStatus({
+        tone: "error",
+        text: "This saved event is no longer available. Reset the draft before saving a new event.",
+      });
+      return;
+    }
+
+    if (isEditingExistingEvent && editingEvent && !canSaveDraft) {
+      setStatus({
+        tone: "error",
+        text: "Only event owners can save changes to this event.",
+      });
+      return;
+    }
+
+    const fieldPayload = fields.map((field) => ({
+      id: field.id,
+      label: field.label,
+      key: field.key,
+      type: field.type,
+      required: field.required,
+      sortOrder: field.sortOrder,
+      aliases: field.aliases,
+      options: field.options,
+    }));
+
+    const createPayload: CreateEventPayload = {
       title,
       description: draft.description.trim(),
       eventDate: draft.eventDate || undefined,
       templateName,
-      fields: fields.map((field) => ({
+      fields: fieldPayload.map((field) => ({
         label: field.label,
+        key: field.key,
+        type: field.type,
+        required: field.required,
+        sortOrder: field.sortOrder,
+        aliases: field.aliases,
+        options: field.options,
+      })),
+    };
+    const updatePayload: UpdateEventPayload = {
+      title,
+      description: draft.description.trim(),
+      eventDate: draft.eventDate || null,
+      templateName,
+      fields: fieldPayload.map((field) => ({
+        label: field.label,
+        id: field.id,
         key: field.key,
         type: field.type,
         required: field.required,
@@ -1004,20 +1067,33 @@ export function TemplateBuilder() {
     };
 
     setIsSaving(true);
+    setStatus({
+      tone: "info",
+      text: isEditingExistingEvent ? "Saving event changes." : "Saving event.",
+    });
 
     try {
-      const event = await createEvent(payload);
-      setSavedEvents((currentEvents) => [event, ...currentEvents]);
-      setStatus({ tone: "success", text: "Event template saved to Supabase." });
-      setReviewEvent(event);
-      setDocuments([]);
-      setSelectedDocumentId("");
-      setRecords([]);
-      setFieldSuggestions([]);
-      setReviewStatus({
-        tone: "info",
-        text: "Template ready for extraction.",
+      const event =
+        isEditingExistingEvent && editingEvent
+          ? await updateEvent(editingEvent.id, updatePayload)
+          : await createEvent(createPayload);
+
+      if (isEditingExistingEvent) {
+        replaceSavedEvent(event);
+      } else {
+        setSavedEvents((currentEvents) => [event, ...currentEvents]);
+      }
+
+      setDraft(eventToDraft(event));
+      setEditingEventId(event.id);
+      setStatus({
+        tone: "success",
+        text: isEditingExistingEvent
+          ? "Event template changes saved."
+          : "Event template saved to Supabase.",
       });
+      setFieldSuggestions([]);
+      await selectReviewEvent(event);
     } catch (error) {
       setStatus({
         tone: "error",
@@ -1033,12 +1109,19 @@ export function TemplateBuilder() {
       ...starterDraft,
       fields: starterDraft.fields.map((field) => ({ ...field })),
     });
+    setEditingEventId(null);
     setStatus({ tone: "info", text: "Draft reset to the starter template." });
   }
 
   function loadSavedEvent(event: CrowdLogEvent) {
     setDraft(eventToDraft(event));
-    setStatus({ tone: "info", text: "Saved event loaded into the editor." });
+    setEditingEventId(event.id);
+    setStatus({
+      tone: "info",
+      text: canManageEvent(event, currentUser)
+        ? "Saved event loaded for editing."
+        : "Saved event loaded for viewing. Only owners can save changes.",
+    });
   }
 
   async function selectReviewEvent(event: CrowdLogEvent) {
@@ -1105,6 +1188,10 @@ export function TemplateBuilder() {
         setRecords([]);
         setFieldSuggestions([]);
         setReviewStatus({ tone: "info", text: "Deleted event removed." });
+      }
+
+      if (editingEventId === event.id) {
+        setEditingEventId(null);
       }
 
       setStatus({ tone: "success", text: "Saved event deleted." });
@@ -1922,15 +2009,24 @@ export function TemplateBuilder() {
                     onClick={resetDraft}
                     className="h-11 rounded-md border border-[#cbd5c8] px-4 text-sm font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
                   >
-                    Reset draft
+                    {isEditingExistingEvent ? "New draft" : "Reset draft"}
                   </button>
-                    <button
-                      type="button"
-                      onClick={saveEventTemplate}
-                    disabled={isSaving || !currentUser || isLoadingSession}
-                      className="h-11 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-[#a8d3b7]"
-                    >
-                    {isSaving ? "Saving..." : "Save event template"}
+                  <button
+                    type="button"
+                    onClick={saveEventTemplate}
+                    disabled={
+                      isSaving ||
+                      !currentUser ||
+                      isLoadingSession ||
+                      !canSaveDraft
+                    }
+                    className="h-11 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-[#a8d3b7]"
+                  >
+                    {isSaving
+                      ? "Saving..."
+                      : isEditingExistingEvent
+                        ? "Save changes"
+                        : "Save event template"}
                   </button>
                 </div>
               </div>
@@ -2059,7 +2155,7 @@ export function TemplateBuilder() {
                             disabled={isDeleting}
                             className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            Load
+                            {isOwner ? "Edit" : "View"}
                           </button>
                           <button
                             type="button"

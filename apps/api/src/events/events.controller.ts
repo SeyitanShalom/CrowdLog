@@ -15,6 +15,7 @@ import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { CreateTemplateDto } from "./dto/create-template.dto";
 import { TemplateFieldInputDto } from "./dto/template-field-input.dto";
+import { UpdateEventDto } from "./dto/update-event.dto";
 import { UpdateEventMemberDto } from "./dto/update-event-member.dto";
 import { EventsService } from "./events.service";
 
@@ -55,6 +56,16 @@ export class EventsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.eventsService.deleteEvent(eventId, user.id);
+  }
+
+  @Patch("events/:eventId")
+  @UseGuards(AuthGuard)
+  updateEvent(
+    @Param("eventId") eventId: string,
+    @Body() dto: UpdateEventDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.eventsService.updateEvent(eventId, dto, user.id);
   }
 
   @Post("events/:eventId/members")

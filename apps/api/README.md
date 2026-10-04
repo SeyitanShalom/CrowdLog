@@ -170,16 +170,19 @@ preserved in the configured OCR wrapper when extraction later recovers through
 another provider or mock fallback.
 
 `GET /health/ocr` is a read-only deployment check for OCR/PDF readiness. It
-reports the selected provider mode, mock fallback setting, Azure/Google/HTTP
-configuration booleans, direct-PDF support, `pdftoppm` availability, and the
-effective PDF extraction path without exposing provider secrets or calling an
-external OCR API.
+reports the selected provider mode, mock fallback setting,
+Azure/Google Document AI/Google Vision/AWS Textract/HTTP configuration
+booleans, direct-PDF support, `pdftoppm` availability, and the effective PDF
+extraction path without exposing provider secrets or calling an external OCR
+API.
 
 For a credentialed provider smoke check, run `npm run smoke:ocr` after setting
-`OCR_SMOKE_PROVIDER` to `azure`, `google`, or `http` and `OCR_SMOKE_FILE` to a
-local sample PDF or image. The script calls the selected provider directly after
-building the API and prints row counts, field coverage, confidence, issue
-counts, and suggested field metadata without printing extracted cell values.
+`OCR_SMOKE_PROVIDER` to `azure`, `google`, `google-vision`, `aws-textract`, or
+`http` and `OCR_SMOKE_FILE` to a local sample PDF or image. The script calls
+the selected provider directly after building the API and prints row counts,
+field coverage, confidence, issue counts, and suggested field metadata without
+printing extracted cell values. Set `OCR_SMOKE_SUMMARY_FILE` to also save that
+sanitized summary as a JSON artifact for comparing repeated provider runs.
 
 Optional smoke-check variables:
 
@@ -192,6 +195,7 @@ OCR_SMOKE_PAGE_COUNT="1"
 OCR_SMOKE_TOTAL_PAGES=""
 OCR_SMOKE_REQUIRE_ROWS="true"
 OCR_SMOKE_FIELDS_JSON='[{"label":"Name","key":"name","type":"text","required":true}]'
+OCR_SMOKE_SUMMARY_FILE=".tmp/ocr-smoke/azure-summary.json"
 ```
 
 `POST /documents/:documentId/extract` runs extraction for an uploaded document.

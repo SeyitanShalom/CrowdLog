@@ -1,8 +1,14 @@
-const { existsSync, statSync } = require("node:fs");
-const { basename, extname, resolve } = require("node:path");
+const { existsSync, mkdirSync, statSync, writeFileSync } = require("node:fs");
+const { basename, dirname, extname, resolve } = require("node:path");
 
 const DEFAULT_DATE = new Date("2026-01-01T00:00:00.000Z");
-const SUPPORTED_PROVIDERS = new Set(["azure", "google", "http"]);
+const SUPPORTED_PROVIDERS = new Set([
+  "aws-textract",
+  "azure",
+  "google",
+  "google-vision",
+  "http",
+]);
 const PRISMA_FIELD_TYPES = new Set([
   "TEXT",
   "EMAIL",
@@ -51,6 +57,10 @@ async function runSmokeCheck(config, providerFactory = createProvider) {
     );
   }
 
+  if (config.summaryFilePath) {
+    writeSmokeSummaryFile(summary, config.summaryFilePath);
+  }
+
   return summary;
 }
 
@@ -61,7 +71,7 @@ function readSmokeConfig(env = process.env, cwd = process.cwd()) {
 
   if (!provider || !SUPPORTED_PROVIDERS.has(provider)) {
     throw new Error(
-      'Set OCR_SMOKE_PROVIDER to "azure", "google", or "http" for a real-provider OCR smoke check.',
+      'Set OCR_SMOKE_PROVIDER to "azure", "google", "google-vision", "aws-textract", or "http" for a real-provider OCR smoke check.',
     );
   }
 
@@ -114,6 +124,7 @@ function readSmokeConfig(env = process.env, cwd = process.cwd()) {
       name: "OCR_SMOKE_TOTAL_PAGES",
     }),
     requireRows: env.OCR_SMOKE_REQUIRE_ROWS === "true",
+    summaryFilePath: parseOptionalPathEnv(env.OCR_SMOKE_SUMMARY_FILE, cwd),
   };
 }
 
@@ -149,6 +160,40 @@ function validateProviderEnvironment(provider, env = process.env) {
 
     if (!env.GOOGLE_DOCUMENT_AI_ACCESS_TOKEN?.trim()) {
       missing.push("GOOGLE_DOCUMENT_AI_ACCESS_TOKEN");
+    }
+  }
+
+  if (
+    provider === "google-vision" &&
+    !env.GOOGLE_VISION_API_KEY?.trim() &&
+    !env.GOOGLE_VISION_ACCESS_TOKEN?.trim()
+  ) {
+    missing.push("GOOGLE_VISION_API_KEY or GOOGLE_VISION_ACCESS_TOKEN");
+  }
+
+  if (provider === "aws-textract") {
+    if (
+      !env.AWS_TEXTRACT_ACCESS_KEY_ID?.trim() &&
+      !env.AWS_ACCESS_KEY_ID?.trim()
+    ) {
+      missing.push("AWS_TEXTRACT_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID");
+    }
+
+    if (
+      !env.AWS_TEXTRACT_SECRET_ACCESS_KEY?.trim() &&
+      !env.AWS_SECRET_ACCESS_KEY?.trim()
+    ) {
+      missing.push(
+        "AWS_TEXTRACT_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY",
+      );
+    }
+
+    if (
+      !env.AWS_TEXTRACT_REGION?.trim() &&
+      !env.AWS_REGION?.trim() &&
+      !env.AWS_DEFAULT_REGION?.trim()
+    ) {
+      missing.push("AWS_TEXTRACT_REGION or AWS_REGION or AWS_DEFAULT_REGION");
     }
   }
 
@@ -232,6 +277,11 @@ function summarizeExtraction(result, fields, config = {}) {
   };
 }
 
+function writeSmokeSummaryFile(summary, filePath) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+}
+
 function summarizeRow(row, fields) {
   const data = isPlainObject(row.data) ? row.data : {};
   const values = Array.isArray(row.values) ? row.values : [];
@@ -280,6 +330,14 @@ function summarizeField(field, rows) {
 
 function createProvider(provider) {
   try {
+    if (provider === "aws-textract") {
+      const {
+        AwsTextractOcrProvider,
+      } = require("../dist/ocr/aws-textract-ocr.provider");
+
+      return new AwsTextractOcrProvider();
+    }
+
     if (provider === "azure") {
       const {
         AzureDocumentIntelligenceOcrProvider,
@@ -300,6 +358,14 @@ function createProvider(provider) {
       } = require("../dist/ocr/google-document-ai-ocr.provider");
 
       return new GoogleDocumentAiOcrProvider();
+    }
+
+    if (provider === "google-vision") {
+      const {
+        GoogleVisionOcrProvider,
+      } = require("../dist/ocr/google-vision-ocr.provider");
+
+      return new GoogleVisionOcrProvider();
     }
   } catch (error) {
     throw new Error(
@@ -404,8 +470,24 @@ function normalizeProviderName(value) {
     return "azure";
   }
 
+  if (
+    normalized === "aws" ||
+    normalized === "aws-textract" ||
+    normalized === "textract"
+  ) {
+    return "aws-textract";
+  }
+
   if (normalized === "google-document-ai") {
     return "google";
+  }
+
+  if (
+    normalized === "google-vision" ||
+    normalized === "google-cloud-vision" ||
+    normalized === "vision"
+  ) {
+    return "google-vision";
   }
 
   if (
@@ -461,6 +543,14 @@ function parseOptionalIntegerEnv(value, options) {
   }
 
   return parseIntegerEnv(value, { ...options, fallback: undefined });
+}
+
+function parseOptionalPathEnv(value, cwd) {
+  if (!value?.trim()) {
+    return undefined;
+  }
+
+  return resolve(cwd, value.trim());
 }
 
 function inferFileType(filePath) {
@@ -535,12 +625,14 @@ function isPlainObject(value) {
 function helpText() {
   return `
 Usage:
+  OCR_SMOKE_PROVIDER=aws-textract OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
   OCR_SMOKE_PROVIDER=azure OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
   OCR_SMOKE_PROVIDER=google OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
+  OCR_SMOKE_PROVIDER=google-vision OCR_SMOKE_FILE=./samples/sheet.png npm run smoke:ocr
   OCR_SMOKE_PROVIDER=http OCR_SMOKE_FILE=./samples/sheet.pdf npm run smoke:ocr
 
 Environment:
-  OCR_SMOKE_PROVIDER       Required: azure, google, or http.
+  OCR_SMOKE_PROVIDER       Required: azure, google, google-vision, aws-textract, or http.
   OCR_SMOKE_FILE           Required: local PDF/image path.
   OCR_SMOKE_FILE_TYPE      Optional MIME type; inferred from extension.
   OCR_SMOKE_LAYOUT         Optional: table or form. Defaults to table.
@@ -550,15 +642,21 @@ Environment:
   OCR_SMOKE_TOTAL_PAGES    Optional known PDF page count for metadata.
   OCR_SMOKE_REQUIRE_ROWS   Optional true/false; fail when no rows are returned.
   OCR_SMOKE_FIELDS_JSON    Optional JSON array of template fields.
+  OCR_SMOKE_SUMMARY_FILE   Optional path for a sanitized JSON summary artifact.
 
 Provider configuration:
+  AWS Textract requires AWS_TEXTRACT_REGION plus AWS_TEXTRACT_ACCESS_KEY_ID and
+  AWS_TEXTRACT_SECRET_ACCESS_KEY, or the standard AWS_REGION/AWS_ACCESS_KEY_ID/
+  AWS_SECRET_ACCESS_KEY names. AWS_TEXTRACT_SESSION_TOKEN is optional.
   Azure requires AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY.
   Google requires GOOGLE_DOCUMENT_AI_PROJECT_ID, GOOGLE_DOCUMENT_AI_LOCATION,
   GOOGLE_DOCUMENT_AI_PROCESSOR_ID, and GOOGLE_DOCUMENT_AI_ACCESS_TOKEN.
+  Google Vision requires GOOGLE_VISION_API_KEY or GOOGLE_VISION_ACCESS_TOKEN.
   HTTP requires OCR_HTTP_ENDPOINT and supports OCR_HTTP_BEARER_TOKEN, OCR_HTTP_DIRECT_PDF, and OCR_HTTP_INCLUDE_FILE.
 
 The summary intentionally omits extracted cell values so real smoke-test output
-does not print attendance data.
+does not print attendance data. When OCR_SMOKE_SUMMARY_FILE is set, the same
+sanitized summary is written to that JSON file for later comparison.
 `.trim();
 }
 
@@ -578,4 +676,5 @@ module.exports = {
   runSmokeCheck,
   summarizeExtraction,
   validateProviderEnvironment,
+  writeSmokeSummaryFile,
 };

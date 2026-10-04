@@ -4,8 +4,10 @@ import type {
   OcrExtractionResult,
   OcrProvider,
 } from "./ocr-provider.interface";
+import { AwsTextractOcrProvider } from "./aws-textract-ocr.provider";
 import { AzureDocumentIntelligenceOcrProvider } from "./azure-document-intelligence-ocr.provider";
 import { GoogleDocumentAiOcrProvider } from "./google-document-ai-ocr.provider";
+import { GoogleVisionOcrProvider } from "./google-vision-ocr.provider";
 import { HttpOcrProvider } from "./http-ocr.provider";
 import { MockOcrProvider } from "./mock-ocr.provider";
 import { WindowsOcrProvider } from "./windows-ocr.provider";
@@ -16,7 +18,9 @@ type OcrProviderMode =
   | "windows"
   | "http"
   | "azure"
-  | "google";
+  | "aws-textract"
+  | "google"
+  | "google-vision";
 type OcrFallbackFailure = {
   provider: string;
   message: string;
@@ -32,6 +36,8 @@ export class ConfiguredOcrProvider implements OcrProvider {
     private readonly httpOcrProvider: HttpOcrProvider,
     private readonly azureOcrProvider?: AzureDocumentIntelligenceOcrProvider,
     private readonly googleOcrProvider?: GoogleDocumentAiOcrProvider,
+    private readonly googleVisionOcrProvider?: GoogleVisionOcrProvider,
+    private readonly awsTextractOcrProvider?: AwsTextractOcrProvider,
   ) {}
 
   canReadPdfDirectly(input: OcrExtractionInput) {
@@ -53,6 +59,14 @@ export class ConfiguredOcrProvider implements OcrProvider {
       return this.googleOcrProvider?.canReadPdfDirectly?.(input) ?? false;
     }
 
+    if (mode === "google-vision") {
+      return this.googleVisionOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (mode === "aws-textract") {
+      return this.awsTextractOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
     if (mode !== "auto") {
       return false;
     }
@@ -63,6 +77,14 @@ export class ConfiguredOcrProvider implements OcrProvider {
 
     if (this.canUseGoogleOcr(input)) {
       return this.googleOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (this.canUseAwsTextractOcr(input)) {
+      return this.awsTextractOcrProvider?.canReadPdfDirectly?.(input) ?? false;
+    }
+
+    if (this.canUseGoogleVisionOcr(input)) {
+      return this.googleVisionOcrProvider?.canReadPdfDirectly?.(input) ?? false;
     }
 
     if (this.canUseHttpOcr()) {
@@ -89,6 +111,14 @@ export class ConfiguredOcrProvider implements OcrProvider {
 
     if (mode === "google") {
       return this.googleProvider().extract(input);
+    }
+
+    if (mode === "google-vision") {
+      return this.googleVisionProvider().extract(input);
+    }
+
+    if (mode === "aws-textract") {
+      return this.awsTextractProvider().extract(input);
     }
 
     const fallbackFailures: OcrFallbackFailure[] = [];
@@ -141,6 +171,40 @@ export class ConfiguredOcrProvider implements OcrProvider {
       }
     }
 
+    if (this.canUseAwsTextractOcr(input)) {
+      try {
+        return this.withFallbackDiagnostics(
+          await this.awsTextractProvider().extract(input),
+          fallbackFailures,
+        );
+      } catch (error) {
+        if (process.env.OCR_FALLBACK_TO_MOCK === "false") {
+          throw error;
+        }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.awsTextractProvider().name, error),
+        );
+      }
+    }
+
+    if (this.canUseGoogleVisionOcr(input)) {
+      try {
+        return this.withFallbackDiagnostics(
+          await this.googleVisionProvider().extract(input),
+          fallbackFailures,
+        );
+      } catch (error) {
+        if (process.env.OCR_FALLBACK_TO_MOCK === "false") {
+          throw error;
+        }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.googleVisionProvider().name, error),
+        );
+      }
+    }
+
     if (this.canUseHttpOcr()) {
       try {
         return this.withFallbackDiagnostics(
@@ -173,8 +237,14 @@ export class ConfiguredOcrProvider implements OcrProvider {
       value === "http" ||
       value === "azure" ||
       value === "azure-document-intelligence" ||
+      value === "aws" ||
+      value === "aws-textract" ||
+      value === "textract" ||
       value === "google" ||
-      value === "google-document-ai"
+      value === "google-document-ai" ||
+      value === "google-vision" ||
+      value === "google-cloud-vision" ||
+      value === "vision"
     ) {
       if (value === "azure-document-intelligence") {
         return "azure";
@@ -182,6 +252,14 @@ export class ConfiguredOcrProvider implements OcrProvider {
 
       if (value === "google-document-ai") {
         return "google";
+      }
+
+      if (value === "google-cloud-vision" || value === "vision") {
+        return "google-vision";
+      }
+
+      if (value === "aws" || value === "textract") {
+        return "aws-textract";
       }
 
       return value;
@@ -222,6 +300,30 @@ export class ConfiguredOcrProvider implements OcrProvider {
     );
   }
 
+  private canUseAwsTextractOcr(input: OcrExtractionInput) {
+    return (
+      Boolean(this.awsTextractOcrProvider) &&
+      Boolean(input.document.filePath) &&
+      (Boolean(process.env.AWS_TEXTRACT_ACCESS_KEY_ID?.trim()) ||
+        Boolean(process.env.AWS_ACCESS_KEY_ID?.trim())) &&
+      (Boolean(process.env.AWS_TEXTRACT_SECRET_ACCESS_KEY?.trim()) ||
+        Boolean(process.env.AWS_SECRET_ACCESS_KEY?.trim())) &&
+      (Boolean(process.env.AWS_TEXTRACT_REGION?.trim()) ||
+        Boolean(process.env.AWS_REGION?.trim()) ||
+        Boolean(process.env.AWS_DEFAULT_REGION?.trim()))
+    );
+  }
+
+  private canUseGoogleVisionOcr(input: OcrExtractionInput) {
+    return (
+      Boolean(this.googleVisionOcrProvider) &&
+      Boolean(input.document.filePath) &&
+      input.document.fileType !== "application/pdf" &&
+      (Boolean(process.env.GOOGLE_VISION_API_KEY?.trim()) ||
+        Boolean(process.env.GOOGLE_VISION_ACCESS_TOKEN?.trim()))
+    );
+  }
+
   private azureProvider() {
     if (!this.azureOcrProvider) {
       throw new Error("Azure Document Intelligence OCR provider is not registered.");
@@ -236,6 +338,22 @@ export class ConfiguredOcrProvider implements OcrProvider {
     }
 
     return this.googleOcrProvider;
+  }
+
+  private googleVisionProvider() {
+    if (!this.googleVisionOcrProvider) {
+      throw new Error("Google Vision OCR provider is not registered.");
+    }
+
+    return this.googleVisionOcrProvider;
+  }
+
+  private awsTextractProvider() {
+    if (!this.awsTextractOcrProvider) {
+      throw new Error("AWS Textract OCR provider is not registered.");
+    }
+
+    return this.awsTextractOcrProvider;
   }
 
   private withFallbackDiagnostics(
@@ -291,6 +409,10 @@ export class ConfiguredOcrProvider implements OcrProvider {
       )
       .replace(
         /((?:access[_-]?token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+        "$1[redacted]",
+      )
+      .replace(
+        /((?:aws[_-]?)?(?:access[_-]?key[_-]?id|secret[_-]?access[_-]?key)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
         "$1[redacted]",
       );
   }
