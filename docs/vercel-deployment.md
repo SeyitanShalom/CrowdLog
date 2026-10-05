@@ -46,7 +46,16 @@ Set these API environment variables in Vercel:
 DATABASE_URL="your Supabase session-pooler connection string"
 CORS_ORIGINS="https://your-web-project.vercel.app"
 NODE_ENV="production"
+NODE_OPTIONS="--experimental-require-module"
+SUPABASE_URL="https://your-project-ref.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY="your Supabase secret/service-role key"
+SUPABASE_STORAGE_BUCKET="attendance-uploads"
 ```
+
+`NODE_OPTIONS` is needed because NestJS 12 packages are ESM-only, while this API
+currently builds as CommonJS. Vercel runs functions on a Lambda-style runtime
+that needs `--experimental-require-module` to load those ESM packages from
+CommonJS.
 
 Optional, mainly when calling the API directly from another domain:
 
