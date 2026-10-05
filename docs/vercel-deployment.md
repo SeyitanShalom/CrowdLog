@@ -39,6 +39,8 @@ Framework Preset: Other
 
 `apps/api/vercel.json` supplies the install, build, function, and routing
 settings.
+Its install command uses `npm ci --include=dev` so Vercel still installs
+workspace build tooling when `NODE_ENV=production` is present.
 
 Set these API environment variables in Vercel:
 
