@@ -18,6 +18,7 @@ import {
   signOut as apiSignOut,
   updateEventMember,
 } from "@/lib/api-client";
+import { WebsiteHelpDialog } from "./help-dialog";
 
 const EVENT_ROLE_LABELS: Record<EventMemberRole, string> = {
   owner: "Owner",
@@ -46,6 +47,7 @@ export function TeamManagementRoute() {
   const [removingMemberIds, setRemovingMemberIds] = useState<string[]>([]);
   const [updatingMemberIds, setUpdatingMemberIds] = useState<string[]>([]);
   const [status, setStatus] = useState<StatusMessage>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const currentRole = eventRoleForUser(event, currentUser);
   const canManageEvent = currentRole === "owner";
@@ -305,21 +307,35 @@ export function TeamManagementRoute() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f8f4] text-[#1f2a22]">
-      <header className="border-b border-[#dfe6db] bg-white">
+    <div className="app-shell min-h-screen text-[#2f241b] xl:flex xl:h-screen xl:flex-col xl:overflow-hidden">
+      <header className="sticky top-0 z-30 shrink-0 border-b border-white/50 bg-white/62 shadow-[0_18px_60px_rgba(124,69,32,0.08)] backdrop-blur-2xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-5 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
-              CrowdLog team
-            </p>
-            <h1 className="mt-1 truncate text-2xl font-semibold text-[#172017]">
-              {event?.title ?? "Event team"}
-            </h1>
+          <div className="motion-rise flex min-w-0 items-center gap-4">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-[#f97316] via-[#fb923c] to-[#d76d37] text-sm font-black text-white shadow-[0_14px_30px_rgba(249,115,22,0.25)]">
+              CL
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#f97316]">
+                CrowdLog team
+              </p>
+              <h1 className="mt-1 truncate text-2xl font-semibold text-[#2f241b]">
+                {event?.title ?? "Event team"}
+              </h1>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="motion-rise-delay-1 flex flex-wrap gap-2">
+            <button
+              type="button"
+              aria-label="Open website help"
+              title="Open website help"
+              onClick={() => setIsHelpOpen(true)}
+              className="grid h-10 w-10 place-items-center rounded-full border border-[#fed7aa] bg-white/80 text-sm font-black text-[#f97316] shadow-sm hover:bg-white"
+            >
+              ?
+            </button>
             <Link
               href={event ? `/?eventId=${encodeURIComponent(event.id)}` : "/"}
-              className="inline-flex h-10 items-center rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
+              className="inline-flex h-10 items-center rounded-md border border-[#fed7aa] bg-white/70 px-3 text-sm font-semibold text-[#70411d] shadow-sm transition hover:bg-white"
             >
               Review workspace
             </Link>
@@ -336,9 +352,13 @@ export function TeamManagementRoute() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-5 py-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="space-y-5 xl:sticky xl:top-5 xl:self-start">
-          <section className="rounded-md border border-[#dfe6db] bg-white p-4">
+      {isHelpOpen ? (
+        <WebsiteHelpDialog onClose={() => setIsHelpOpen(false)} />
+      ) : null}
+
+      <main className="mx-auto grid w-full max-w-7xl gap-5 px-5 py-5 xl:min-h-0 xl:flex-1 xl:grid-cols-[320px_minmax(0,1fr)] xl:overflow-hidden">
+        <aside className="space-y-5 xl:min-h-0 xl:overflow-y-auto xl:pr-1 xl:pb-5">
+          <section className="glass-panel-strong motion-rise rounded-md p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
               Signed in
             </p>
@@ -346,7 +366,7 @@ export function TeamManagementRoute() {
               <p className="mt-3 text-sm text-[#667265]">Checking session...</p>
             ) : currentUser ? (
               <div className="mt-3">
-                <p className="truncate text-sm font-semibold text-[#172017]">
+                <p className="truncate text-sm font-semibold text-[#2f241b]">
                   {currentUser.name || currentUser.email}
                 </p>
                 <p className="mt-1 truncate text-xs text-[#667265]">
@@ -377,7 +397,7 @@ export function TeamManagementRoute() {
                         email: inputEvent.target.value,
                       })
                     }
-                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                   />
                 </label>
                 <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
@@ -390,13 +410,13 @@ export function TeamManagementRoute() {
                         name: inputEvent.target.value,
                       })
                     }
-                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                   />
                 </label>
                 <button
                   type="submit"
                   disabled={isSigningIn || !authDraft.email.trim()}
-                  className="h-10 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="action-primary h-10 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isSigningIn ? "Signing in" : "Sign in"}
                 </button>
@@ -404,11 +424,11 @@ export function TeamManagementRoute() {
             )}
           </section>
 
-          <section className="rounded-md border border-[#dfe6db] bg-white p-4">
+          <section className="glass-panel-strong motion-rise-delay-1 rounded-md p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
               Team counts
             </p>
-            <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-md border border-[#e1e5dc] text-center">
+            <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-md border border-[#dce8e4] bg-white/60 text-center">
               <SummaryCount label="Total" value={members.length} />
               <SummaryCount label="Owners" value={ownerCount} />
               <SummaryCount label="Reviewers" value={reviewerCount} />
@@ -421,7 +441,7 @@ export function TeamManagementRoute() {
           </section>
 
           {canManageEvent ? (
-            <section className="rounded-md border border-[#dfe6db] bg-white p-4">
+            <section className="glass-panel-strong motion-rise-delay-2 rounded-md p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
                 Add reviewer
               </p>
@@ -443,7 +463,7 @@ export function TeamManagementRoute() {
                         email: inputEvent.target.value,
                       })
                     }
-                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                   />
                 </label>
                 <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
@@ -456,13 +476,13 @@ export function TeamManagementRoute() {
                         name: inputEvent.target.value,
                       })
                     }
-                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                   />
                 </label>
                 <button
                   type="submit"
                   disabled={isAddingReviewer || !memberDraft.email.trim()}
-                  className="h-10 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="action-primary h-10 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isAddingReviewer ? "Adding reviewer" : "Add reviewer"}
                 </button>
@@ -471,13 +491,13 @@ export function TeamManagementRoute() {
           ) : null}
         </aside>
 
-        <section className="min-w-0 rounded-md border border-[#dfe6db] bg-white">
-          <div className="flex flex-col gap-3 border-b border-[#e1e5dc] px-4 py-4 md:flex-row md:items-center md:justify-between">
+        <section className="glass-panel motion-rise-delay-1 min-w-0 overflow-hidden rounded-md xl:min-h-0 xl:overflow-y-auto">
+          <div className="panel-head flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
                 Roster
               </p>
-              <h2 className="mt-1 text-lg font-semibold text-[#172017]">
+              <h2 className="mt-1 text-lg font-semibold text-[#2f241b]">
                 {event?.title ?? "No event loaded"}
               </h2>
             </div>
@@ -550,8 +570,8 @@ function MemberSection({
   onChangeMemberRole: (member: EventMember, nextRole: EventMemberRole) => void;
 }) {
   return (
-    <section className="overflow-hidden rounded-md border border-[#e5e9e2]">
-      <div className="flex items-center justify-between gap-3 border-b border-[#e5e9e2] bg-[#f6f8f2] px-3 py-2">
+    <section className="overflow-hidden rounded-md border border-[#dce8e4] bg-white/62 shadow-[0_12px_30px_rgba(124,69,32,0.08)]">
+      <div className="flex items-center justify-between gap-3 border-b border-[#dce8e4] bg-[#eaf6f2] px-3 py-2">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
           {label}
         </p>
@@ -567,7 +587,7 @@ function MemberSection({
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-            <thead className="bg-white text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+            <thead className="bg-white/75 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
               <tr>
                 <th className="border-b border-[#edf0ea] px-3 py-2">Member</th>
                 <th className="border-b border-[#edf0ea] px-3 py-2">Role</th>
@@ -588,16 +608,16 @@ function MemberSection({
                   isUpdating || (member.role === "owner" && !canDemoteOwner);
 
                 return (
-                  <tr key={member.id} className="align-middle">
+                  <tr key={member.id} className="align-middle transition hover:bg-[#f6fbf8]">
                     <td className="px-3 py-3">
                       <div className="flex min-w-0 items-center gap-3">
-                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-[#edf3ea] text-sm font-semibold text-[#2f6f4e]">
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-[#fff7ed] text-sm font-semibold text-[#f97316]">
                           {(member.name || member.email)
                             .slice(0, 1)
                             .toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-semibold text-[#172017]">
+                          <p className="truncate font-semibold text-[#2f241b]">
                             {member.name || member.email}
                             {isCurrentUser ? " (you)" : ""}
                           </p>
@@ -622,7 +642,7 @@ function MemberSection({
                             selectEvent.target.value as EventMemberRole,
                           )
                         }
-                        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                       >
                         <option value="owner">Owner</option>
                         <option value="reviewer">Reviewer</option>
@@ -661,8 +681,8 @@ function MemberSection({
 
 function SummaryCount({ label, value }: { label: string; value: number }) {
   return (
-    <div className="border-r border-[#e1e5dc] px-2 py-2.5 last:border-r-0">
-      <p className="text-lg font-semibold text-[#172017]">{value}</p>
+    <div className="border-r border-[#dce8e4] px-2 py-2.5 last:border-r-0">
+      <p className="text-lg font-semibold text-[#2f241b]">{value}</p>
       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667265]">
         {label}
       </p>
@@ -677,7 +697,7 @@ function StatusBanner({ status }: { status: StatusMessage }) {
 
   const className =
     status.tone === "success"
-      ? "border-[#b8d5bd] bg-[#edf7ef] text-[#2f6f4e]"
+      ? "border-[#fed7aa] bg-[#fff7ed] text-[#f97316]"
       : status.tone === "error"
         ? "border-[#d9b7aa] bg-[#fff1ed] text-[#8a3d2d]"
         : "border-[#d8dfd2] bg-[#fafbf8] text-[#526052]";

@@ -176,14 +176,14 @@ export function ReviewWorkspace({
   return (
     <section
       id="portfolio-review-workspace"
-      className="scroll-mt-5 rounded-lg border border-[#d9dfd3] bg-white"
+      className="glass-panel motion-rise-delay-2 scroll-mt-5 overflow-hidden rounded-lg"
     >
-      <div className="flex flex-col gap-3 border-b border-[#e1e5dc] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      <div className="panel-head flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div>
-          <h2 className="text-lg font-semibold text-[#172017]">
+          <h2 className="text-lg font-semibold text-[#2f241b]">
             Review extracted records
           </h2>
-          <p className="mt-1 text-sm text-[#667265]">
+          <p className="mt-1 text-sm text-[#5f7370]">
             {reviewEvent
               ? reviewEvent.title
               : "Select a saved event to begin review."}
@@ -198,7 +198,7 @@ export function ReviewWorkspace({
                 onChange={(event) =>
                   setExtractionLayout(event.target.value as ExtractionLayout)
                 }
-                className="h-10 w-32 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                className="h-10 w-32 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
               >
                 <option value="table">Table rows</option>
                 <option value="form">Forms</option>
@@ -214,7 +214,7 @@ export function ReviewWorkspace({
                   min={1}
                   value={pdfPageStart}
                   onChange={(event) => setPdfPageStart(event.target.value)}
-                  className="h-10 w-24 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                  className="h-10 w-24 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
               <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
@@ -225,7 +225,7 @@ export function ReviewWorkspace({
                   max={20}
                   value={pdfPageCount}
                   onChange={(event) => setPdfPageCount(event.target.value)}
-                  className="h-10 w-24 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                  className="h-10 w-24 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
             </div>
@@ -234,7 +234,7 @@ export function ReviewWorkspace({
             type="button"
             onClick={() => onMockExtract(extractionOptions())}
             disabled={!reviewEvent || isMockExtracting}
-            className="h-10 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+            className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isMockExtracting
               ? selectedDocument
@@ -329,7 +329,7 @@ export function ReviewWorkspace({
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   disabled={!reviewEvent || records.length === 0}
-                  className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                  className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
 
@@ -341,7 +341,7 @@ export function ReviewWorkspace({
                     setStatusFilter(event.target.value as ReviewStatusFilter)
                   }
                   disabled={!reviewEvent || records.length === 0}
-                  className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                  className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                 >
                   {REVIEW_STATUS_FILTERS.map((filter) => (
                     <option key={filter.value} value={filter.value}>
@@ -356,7 +356,7 @@ export function ReviewWorkspace({
                   type="button"
                   onClick={exportFilteredRecords}
                   disabled={!reviewEvent || filteredRecords.length === 0}
-                  className="h-10 rounded-md border border-[#b8c9b2] bg-white px-4 text-sm font-semibold text-[#2f6f4e] transition hover:bg-[#edf3ea] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-10 rounded-md border border-[#fed7aa] bg-white px-4 text-sm font-semibold text-[#f97316] transition hover:bg-[#fff7ed] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Export visible
                 </button>
@@ -364,7 +364,7 @@ export function ReviewWorkspace({
                   type="button"
                   onClick={onExportAllCsv}
                   disabled={!reviewEvent || isExportingAllCsv}
-                  className="h-10 rounded-md bg-[#2f6f4e] px-4 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isExportingAllCsv ? "Exporting" : "Export all CSV"}
                 </button>
@@ -372,7 +372,7 @@ export function ReviewWorkspace({
                   type="button"
                   onClick={onExportExcel}
                   disabled={!reviewEvent || isExportingExcel}
-                  className="h-10 rounded-md border border-[#b8c9b2] bg-[#edf3ea] px-4 text-sm font-semibold text-[#2f6f4e] transition hover:bg-[#dfeade] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-10 rounded-md border border-[#fed7aa] bg-[#fff7ed] px-4 text-sm font-semibold text-[#f97316] transition hover:bg-[#ffedd5] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isExportingExcel ? "Exporting" : "Export Excel"}
                 </button>
@@ -384,7 +384,7 @@ export function ReviewWorkspace({
                 <p
                   className={
                     reviewStatus.tone === "success"
-                      ? "font-medium text-[#2f6f4e]"
+                      ? "font-medium text-[#f97316]"
                       : reviewStatus.tone === "error"
                         ? "font-medium text-[#a33f2f]"
                         : "font-medium text-[#546657]"
@@ -439,9 +439,9 @@ export function ReviewWorkspace({
             </div>
           ) : null}
 
-          <div className="overflow-x-auto rounded-lg border border-[#dfe4dc]">
-            <table className="min-w-full border-collapse bg-white text-sm">
-              <thead className="bg-[#f6f8f2] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+          <div className="overflow-x-auto rounded-lg border border-[#cfe0dc] bg-white/75 shadow-[0_14px_34px_rgba(124,69,32,0.08)]">
+            <table className="min-w-full border-collapse bg-white/78 text-sm">
+              <thead className="bg-[#eaf6f2] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#5f7370]">
                 <tr>
                   <th className="w-16 border-b border-[#dfe4dc] px-3 py-3">
                     Row
@@ -495,7 +495,7 @@ export function ReviewWorkspace({
                     const isBusy = busyRecordIds.includes(record.id);
 
                     return (
-                      <tr key={record.id} className="border-t border-[#edf0ea]">
+                      <tr key={record.id} className="border-t border-[#edf0ea] transition hover:bg-[#f6fbf8]">
                         <td className="align-top px-3 py-3 font-semibold text-[#334033]">
                           {record.rowNumber ?? "-"}
                         </td>
@@ -542,7 +542,7 @@ export function ReviewWorkspace({
                               type="button"
                               onClick={() => onApprove(record)}
                               disabled={isBusy}
-                              className="h-9 rounded-md bg-[#2f6f4e] px-3 text-xs font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-50"
+                              className="action-primary h-9 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Approve
                             </button>
@@ -601,13 +601,13 @@ function DocumentUploadPanel({
   return (
     <div
       id="portfolio-document-extraction"
-      className="scroll-mt-5 rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4"
+      className="soft-card scroll-mt-5 rounded-lg p-4"
     >
       <div className="mb-3">
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
           Documents
         </p>
-        <h3 className="mt-1 text-base font-semibold text-[#172017]">
+        <h3 className="mt-1 text-base font-semibold text-[#2f241b]">
           Attendance sheet
         </h3>
       </div>
@@ -626,7 +626,7 @@ function DocumentUploadPanel({
               event.target.value = "";
             }
           }}
-          className="block w-full rounded-md border border-[#cbd5c8] bg-white text-sm text-[#334033] file:mr-3 file:h-10 file:border-0 file:bg-[#2f6f4e] file:px-3 file:text-sm file:font-semibold file:text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="block w-full rounded-md border border-[#cbd5c8] bg-white text-sm text-[#334033] file:mr-3 file:h-10 file:border-0 file:bg-[#f97316] file:px-3 file:text-sm file:font-semibold file:text-white disabled:cursor-not-allowed disabled:opacity-60"
         />
       </label>
 
@@ -637,7 +637,7 @@ function DocumentUploadPanel({
             value={selectedDocumentId}
             disabled={disabled || isLoadingDocuments || documents.length === 0}
             onChange={(event) => onSelectDocument(event.target.value)}
-            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
           >
             <option value="">
               {isLoadingDocuments ? "Loading documents..." : "No file selected"}
@@ -664,7 +664,7 @@ function DocumentUploadPanel({
                 event.target.value = "";
               }
             }}
-            className="block w-full rounded-md border border-[#cbd5c8] bg-white text-sm text-[#334033] file:mr-3 file:h-10 file:border-0 file:bg-[#edf3ea] file:px-3 file:text-sm file:font-semibold file:text-[#2f6f4e] disabled:cursor-not-allowed disabled:opacity-60"
+            className="block w-full rounded-md border border-[#cbd5c8] bg-white text-sm text-[#334033] file:mr-3 file:h-10 file:border-0 file:bg-[#fff7ed] file:px-3 file:text-sm file:font-semibold file:text-[#f97316] disabled:cursor-not-allowed disabled:opacity-60"
           />
         </label>
       </div>
@@ -685,9 +685,9 @@ function DocumentUploadPanel({
                 <button
                   type="button"
                   onClick={() => onSelectDocument(document.id)}
-                  className="min-w-0 text-left transition hover:text-[#2f6f4e]"
+                  className="min-w-0 text-left transition hover:text-[#f97316]"
                 >
-                  <span className="block truncate text-sm font-semibold text-[#172017]">
+                  <span className="block truncate text-sm font-semibold text-[#2f241b]">
                     {document.fileName}
                   </span>
                   <span className="mt-1 block text-xs text-[#667265]">
@@ -763,13 +763,13 @@ function EventMembersPanel({
   ];
 
   return (
-    <div className="scroll-mt-5 rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
+    <div className="soft-card scroll-mt-5 rounded-lg p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
             Team management
           </p>
-          <h3 className="mt-1 text-base font-semibold text-[#172017]">
+          <h3 className="mt-1 text-base font-semibold text-[#2f241b]">
             {event?.title ?? "No event selected"}
           </h3>
         </div>
@@ -830,7 +830,7 @@ function EventMembersPanel({
                   email: inputEvent.target.value,
                 })
               }
-              className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+              className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
             />
           </label>
           <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
@@ -843,13 +843,13 @@ function EventMembersPanel({
                   name: inputEvent.target.value,
                 })
               }
-              className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+              className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
             />
           </label>
           <button
             type="submit"
             disabled={isAddingReviewer || !memberDraft.email.trim()}
-            className="h-10 rounded-md bg-[#2f6f4e] px-3 text-sm font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-60"
+            className="action-primary h-10 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isAddingReviewer ? "Adding reviewer" : "Add reviewer"}
           </button>
@@ -894,13 +894,13 @@ function EventMembersPanel({
                     return (
                       <div key={member.id} className="grid gap-3 px-3 py-3">
                         <div className="flex items-start gap-3">
-                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-[#edf3ea] text-sm font-semibold text-[#2f6f4e]">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-[#fff7ed] text-sm font-semibold text-[#f97316]">
                             {(member.name || member.email)
                               .slice(0, 1)
                               .toUpperCase()}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-[#172017]">
+                            <p className="truncate text-sm font-semibold text-[#2f241b]">
                               {member.name || member.email}
                               {isCurrentUser ? " (you)" : ""}
                             </p>
@@ -930,7 +930,7 @@ function EventMembersPanel({
                                   selectEvent.target.value as EventMemberRole,
                                 )
                               }
-                              className="h-9 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+                              className="h-9 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                             >
                               <option value="owner">Owner</option>
                               <option value="reviewer">Reviewer</option>
@@ -982,12 +982,12 @@ function MockDocumentPreview({
   const fileUrl = selectedDocument ? getApiFileUrl(selectedDocument.fileUrl) : "";
 
   return (
-    <div className="rounded-lg border border-[#dfe4dc] bg-[#fbfcf9] p-4">
+    <div className="soft-card rounded-lg p-4">
       <div className="mb-4">
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
           Sheet preview
         </p>
-        <h3 className="mt-1 text-base font-semibold text-[#172017]">
+        <h3 className="mt-1 text-base font-semibold text-[#2f241b]">
           {selectedDocument?.fileName ?? event?.title ?? "No event selected"}
         </h3>
       </div>
@@ -1082,7 +1082,7 @@ function ReviewCell({
   const inputClassName = `h-10 w-full rounded-md border px-3 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] ${
     needsAttention
       ? "border-[#d9a443] bg-[#fff8e6] focus:border-[#b7831e] focus:ring-2 focus:ring-[#f4dda6]"
-      : "border-[#cbd5c8] bg-white focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+      : "border-[#cbd5c8] bg-white focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
   }`;
   const selectedMultiValues = splitCommaList(valueToString(value));
 
@@ -1101,7 +1101,7 @@ function ReviewCell({
             checked={valueToBoolean(value)}
             disabled={disabled}
             onChange={(event) => onChange(event.target.checked)}
-            className="h-4 w-4 rounded border-[#aebbac] accent-[#2f6f4e]"
+            className="h-4 w-4 rounded border-[#aebbac] accent-[#f97316]"
           />
           Signed
         </label>
@@ -1154,7 +1154,7 @@ function ReviewCell({
                         .join(", "),
                     );
                   }}
-                  className="h-4 w-4 rounded border-[#aebbac] accent-[#2f6f4e]"
+                  className="h-4 w-4 rounded border-[#aebbac] accent-[#f97316]"
                 />
                 <span>{option}</span>
               </label>
@@ -1240,7 +1240,7 @@ function ReportingDashboard({
       id="portfolio-reporting-panels"
       className="scroll-mt-5 grid gap-3 xl:grid-cols-2 2xl:grid-cols-3"
     >
-      <section className="rounded-md border border-[#dfe6db] bg-[#fbfcf9] p-3">
+      <section className="soft-card rounded-md p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
           Event completion
         </p>
@@ -1254,7 +1254,7 @@ function ReportingDashboard({
             label="Approved"
             value={approvalPercent}
             detail={`${counts.approved}/${counts.total} rows`}
-            barClassName="bg-[#47785c]"
+            barClassName="bg-[#f97316]"
           />
           <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-[#526052]">
             <span className="rounded-md border border-[#e1e5dc] bg-white px-2 py-1.5">
@@ -1273,7 +1273,7 @@ function ReportingDashboard({
         </div>
       </section>
 
-      <section className="rounded-md border border-[#dfe6db] bg-[#fbfcf9] p-3">
+      <section className="soft-card rounded-md p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
           Documents
         </p>
@@ -1284,13 +1284,13 @@ function ReportingDashboard({
             documentReports.map((document) => (
               <div
                 key={document.id}
-                className="rounded-md border border-[#e1e5dc] bg-white px-2.5 py-2"
+                className="rounded-md border border-[#dce8e4] bg-white/75 px-2.5 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-sm font-semibold text-[#172017]">
+                  <p className="truncate text-sm font-semibold text-[#2f241b]">
                     {document.name}
                   </p>
-                  <span className="text-xs font-semibold text-[#2f6f4e]">
+                  <span className="text-xs font-semibold text-[#f97316]">
                     {document.reviewRate}%
                   </span>
                 </div>
@@ -1309,7 +1309,7 @@ function ReportingDashboard({
         </div>
       </section>
 
-      <section className="rounded-md border border-[#dfe6db] bg-[#fbfcf9] p-3">
+      <section className="soft-card rounded-md p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
           Reviewers
         </p>
@@ -1320,10 +1320,10 @@ function ReportingDashboard({
             reviewerReports.map((reviewer) => (
               <div
                 key={reviewer.id}
-                className="rounded-md border border-[#e1e5dc] bg-white px-2.5 py-2"
+                className="rounded-md border border-[#dce8e4] bg-white/75 px-2.5 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-sm font-semibold text-[#172017]">
+                  <p className="truncate text-sm font-semibold text-[#2f241b]">
                     {reviewer.name}
                     {reviewer.isCurrentUser ? " (you)" : ""}
                   </p>
@@ -1347,7 +1347,7 @@ function ReportingDashboard({
         </div>
       </section>
 
-      <section className="rounded-md border border-[#dfe6db] bg-[#fbfcf9] p-3">
+      <section className="soft-card rounded-md p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
           Field quality
         </p>
@@ -1358,10 +1358,10 @@ function ReportingDashboard({
             fieldReports.map((field) => (
               <div
                 key={field.fieldId}
-                className="rounded-md border border-[#e1e5dc] bg-white px-2.5 py-2"
+                className="rounded-md border border-[#dce8e4] bg-white/75 px-2.5 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="truncate text-sm font-semibold text-[#172017]">
+                  <p className="truncate text-sm font-semibold text-[#2f241b]">
                     {field.label}
                   </p>
                   <span className="shrink-0 text-xs font-semibold text-[#526052]">
@@ -1382,7 +1382,7 @@ function ReportingDashboard({
         </div>
       </section>
 
-      <section className="rounded-md border border-[#dfe6db] bg-[#fbfcf9] p-3">
+      <section className="soft-card rounded-md p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
           Activity
         </p>
@@ -1393,13 +1393,13 @@ function ReportingDashboard({
             activityReports.map((entry) => (
               <div
                 key={entry.date}
-                className="rounded-md border border-[#e1e5dc] bg-white px-2.5 py-2"
+                className="rounded-md border border-[#dce8e4] bg-white/75 px-2.5 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-[#172017]">
+                  <p className="text-sm font-semibold text-[#2f241b]">
                     {entry.date}
                   </p>
-                  <span className="text-xs font-semibold text-[#2f6f4e]">
+                  <span className="text-xs font-semibold text-[#f97316]">
                     {entry.reviewedRecords} reviewed
                   </span>
                 </div>
@@ -1420,7 +1420,7 @@ function ReportProgress({
   label,
   value,
   detail,
-  barClassName = "bg-[#2f6f4e]",
+  barClassName = "bg-[#f97316]",
 }: {
   label: string;
   value: number;
@@ -1440,7 +1440,7 @@ function ReportProgress({
 
 function ProgressBar({
   value,
-  barClassName = "bg-[#2f6f4e]",
+  barClassName = "bg-[#f97316]",
 }: {
   value: number;
   barClassName?: string;
@@ -1448,7 +1448,7 @@ function ProgressBar({
   const width = Math.max(0, Math.min(100, value));
 
   return (
-    <div className="mt-1 h-2 overflow-hidden rounded-full bg-[#e5eadf]">
+    <div className="mt-1 h-2 overflow-hidden rounded-full bg-[#dcebe7]">
       <div className={`h-full ${barClassName}`} style={{ width: `${width}%` }} />
     </div>
   );
@@ -1457,7 +1457,7 @@ function ProgressBar({
 function StatusBadge({ status }: { status: RecordStatus }) {
   const className =
     status === "approved"
-      ? "border-[#b8d5bd] bg-[#edf7ef] text-[#2f6f4e]"
+      ? "border-[#fed7aa] bg-[#fff7ed] text-[#f97316]"
       : status === "rejected"
         ? "border-[#d9b7aa] bg-[#fff1ed] text-[#8a3d2d]"
         : status === "needs_review"
@@ -1475,7 +1475,7 @@ function StatusBadge({ status }: { status: RecordStatus }) {
 
 function SummaryPill({ label, value }: { label: string; value: string }) {
   return (
-    <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2.5 py-1">
+    <span className="rounded-md border border-[#fed7aa] bg-white/70 px-2.5 py-1 shadow-sm">
       {label}: {value}
     </span>
   );
@@ -1483,11 +1483,11 @@ function SummaryPill({ label, value }: { label: string; value: string }) {
 
 export function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-[#e1e5dc] bg-[#fafbf8] p-3">
+    <div className="metric-card rounded-lg p-3">
       <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#667265]">
         {label}
       </p>
-      <p className="mt-1 text-2xl font-semibold text-[#172017]">{value}</p>
+      <p className="mt-1 text-2xl font-semibold text-[#2f241b]">{value}</p>
     </div>
   );
 }

@@ -19,7 +19,7 @@ export function AuthPanel({
 }) {
   if (isLoadingSession) {
     return (
-      <div className="text-sm font-medium text-[#667265]">
+      <div className="rounded-md border border-[#fed7aa] bg-white/60 px-3 py-2 text-sm font-medium text-[#6f6359] shadow-sm">
         Checking session...
       </div>
     );
@@ -27,12 +27,12 @@ export function AuthPanel({
 
   if (currentUser) {
     return (
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-2 rounded-lg border border-[#fed7aa] bg-white/60 p-2 shadow-sm backdrop-blur-xl sm:flex-row sm:items-center">
         <div className="min-w-0 text-sm">
-          <span className="block truncate font-semibold text-[#172017]">
+          <span className="block truncate font-semibold text-[#2f241b]">
             {currentUser.name || currentUser.email}
           </span>
-          <span className="block truncate text-xs text-[#667265]">
+          <span className="block truncate text-xs text-[#5f7370]">
             {currentUser.email}
           </span>
         </div>
@@ -40,7 +40,7 @@ export function AuthPanel({
           type="button"
           onClick={onSignOut}
           disabled={isSigningIn}
-          className="h-9 rounded-md border border-[#cbd5c8] px-3 text-xs font-semibold text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-9 rounded-md border border-[#fed7aa] bg-white/70 px-3 text-xs font-semibold text-[#70411d] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           Sign out
         </button>
@@ -50,7 +50,7 @@ export function AuthPanel({
 
   return (
     <form
-      className="grid gap-2 sm:grid-cols-[180px_160px_auto]"
+      className="grid gap-2 rounded-lg border border-[#fed7aa] bg-white/60 p-2 shadow-sm backdrop-blur-xl sm:grid-cols-[180px_160px_auto]"
       onSubmit={(event) => {
         event.preventDefault();
         onSignIn();
@@ -63,7 +63,7 @@ export function AuthPanel({
         onChange={(event) =>
           onAuthDraftChange({ ...authDraft, email: event.target.value })
         }
-        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
       />
       <input
         value={authDraft.name}
@@ -71,12 +71,12 @@ export function AuthPanel({
         onChange={(event) =>
           onAuthDraftChange({ ...authDraft, name: event.target.value })
         }
-        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#47785c] focus:ring-2 focus:ring-[#dceadf]"
+        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
       />
       <button
         type="submit"
         disabled={isSigningIn}
-        className="h-9 rounded-md bg-[#2f6f4e] px-3 text-xs font-semibold text-white transition hover:bg-[#265c41] disabled:cursor-not-allowed disabled:opacity-50"
+        className="action-primary h-9 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isSigningIn ? "Signing in" : "Sign in"}
       </button>
