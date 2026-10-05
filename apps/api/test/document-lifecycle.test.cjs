@@ -1,6 +1,4 @@
 const assert = require("node:assert/strict");
-const { unlink } = require("node:fs/promises");
-const { basename, join } = require("node:path");
 const test = require("node:test");
 
 const { NotFoundException } = require("@nestjs/common");
@@ -16,6 +14,15 @@ function mockFn(implementation) {
 
   fn.calls = calls;
   return fn;
+}
+
+function mockUploadStorage() {
+  return {
+    uploadFile: mockFn(async (objectKey) => `/uploads/${objectKey}`),
+    downloadFile: mockFn(),
+    deleteFile: mockFn(async () => undefined),
+    fileUrlForObjectKey: (objectKey) => `/uploads/${objectKey}`,
+  };
 }
 
 const now = new Date("2026-09-30T00:00:00.000Z");
@@ -57,7 +64,7 @@ test("event members can delete uploaded documents and their extracted rows", asy
     },
     $transaction: mockFn(async (callback) => callback(tx)),
   };
-  const service = new DocumentsService(prisma);
+  const service = new DocumentsService(prisma, mockUploadStorage());
 
   const result = await service.deleteDocument("document_1", "user_reviewer");
 
@@ -96,7 +103,7 @@ test("outsiders cannot delete uploaded documents", async () => {
     },
     $transaction: mockFn(async (callback) => callback(tx)),
   };
-  const service = new DocumentsService(prisma);
+  const service = new DocumentsService(prisma, mockUploadStorage());
 
   await assert.rejects(
     () => service.deleteDocument("document_1", "user_outsider"),
@@ -133,7 +140,8 @@ test("event members can replace a document file and clear its old extraction", a
     },
     $transaction: mockFn(async (callback) => callback(tx)),
   };
-  const service = new DocumentsService(prisma);
+  const uploadStorage = mockUploadStorage();
+  const service = new DocumentsService(prisma, uploadStorage);
 
   const result = await service.replaceDocumentFile(
     "document_1",
@@ -145,19 +153,14 @@ test("event members can replace a document file and clear its old extraction", a
     "user_reviewer",
   );
 
-  try {
-    assert.deepEqual(tx.attendanceRecord.deleteMany.calls[0][0], {
-      where: { documentId: "document_1" },
-    });
-    assert.equal(tx.attendanceDocument.update.calls[0][0].data.fileName, "replacement sheet.png");
-    assert.equal(tx.attendanceDocument.update.calls[0][0].data.status, AttendanceDocumentStatus.UPLOADED);
-    assert.equal(result.fileName, "replacement sheet.png");
-    assert.equal(result.status, "uploaded");
-    assert.equal(result.recordCount, 0);
-    assert.match(result.fileUrl, /^\/uploads\/.+replacement-sheet\.png$/);
-  } finally {
-    await unlink(join(process.cwd(), "uploads", basename(result.fileUrl))).catch(
-      () => undefined,
-    );
-  }
+  assert.deepEqual(tx.attendanceRecord.deleteMany.calls[0][0], {
+    where: { documentId: "document_1" },
+  });
+  assert.equal(tx.attendanceDocument.update.calls[0][0].data.fileName, "replacement sheet.png");
+  assert.equal(tx.attendanceDocument.update.calls[0][0].data.status, AttendanceDocumentStatus.UPLOADED);
+  assert.equal(uploadStorage.uploadFile.calls.length, 1);
+  assert.equal(result.fileName, "replacement sheet.png");
+  assert.equal(result.status, "uploaded");
+  assert.equal(result.recordCount, 0);
+  assert.match(result.fileUrl, /^\/uploads\/.+replacement-sheet\.png$/);
 });

@@ -6,10 +6,9 @@ import {
   Optional,
 } from "@nestjs/common";
 import { EventMemberRole, Prisma } from "@prisma/client";
-import { unlink } from "node:fs/promises";
-import { basename, resolve } from "node:path";
 import { InvitationEmailService } from "../invitations/invitation-email.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { UploadStorageService } from "../storage/upload-storage.service";
 import { AddEventReviewerDto } from "./dto/add-event-reviewer.dto";
 import { CreateEventDto } from "./dto/create-event.dto";
 import { CreateTemplateDto } from "./dto/create-template.dto";
@@ -33,6 +32,7 @@ export class EventsService {
     private readonly prisma: PrismaService,
     @Optional()
     private readonly invitationEmailService?: InvitationEmailService,
+    private readonly uploadStorage: UploadStorageService = new UploadStorageService(),
   ) {}
 
   async listEvents(userId: string) {
@@ -694,14 +694,8 @@ export class EventsService {
       return;
     }
 
-    const fileName = fileUrl.replace("/uploads/", "");
-
-    if (fileName !== basename(fileName)) {
-      return;
-    }
-
-    await unlink(resolve(process.cwd(), "uploads", fileName)).catch(() => {
-      // The database delete is the source of truth; missing local files are harmless.
+    await this.uploadStorage.deleteFile(fileUrl).catch(() => {
+      // The database delete is the source of truth; missing stored files are harmless.
     });
   }
 

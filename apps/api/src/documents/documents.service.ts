@@ -2,24 +2,27 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
   StreamableFile,
 } from "@nestjs/common";
-import { createReadStream } from "node:fs";
-import { access, mkdir, unlink, writeFile } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { extname, basename } from "node:path";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { AttendanceDocumentStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { UploadStorageService } from "../storage/upload-storage.service";
 import {
   toAttendanceDocumentResponse,
 } from "./attendance-document-response.mapper";
 import type { UploadedAttendanceFile } from "./local-upload.types";
 
-const UPLOAD_DIRECTORY = resolve(process.cwd(), "uploads");
-
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    private readonly uploadStorage: UploadStorageService = new UploadStorageService(),
+  ) {}
 
   async listDocuments(eventId: string, userId: string) {
     await this.ensureEventAccess(eventId, userId);
@@ -48,29 +51,30 @@ export class DocumentsService {
       throw new BadRequestException("Upload an attendance sheet file.");
     }
 
-    await mkdir(UPLOAD_DIRECTORY, { recursive: true });
-
     const storedFileName = this.createStoredFileName(file.originalname);
-    const filePath = join(UPLOAD_DIRECTORY, storedFileName);
+    const fileUrl = await this.uploadStorage.uploadFile(storedFileName, file);
 
-    await writeFile(filePath, file.buffer);
-
-    const document = await this.prisma.attendanceDocument.create({
-      data: {
-        eventId,
-        fileName: file.originalname,
-        fileType: file.mimetype,
-        fileUrl: `/uploads/${storedFileName}`,
-        status: AttendanceDocumentStatus.UPLOADED,
-      },
-      include: {
-        _count: {
-          select: { records: true },
+    try {
+      const document = await this.prisma.attendanceDocument.create({
+        data: {
+          eventId,
+          fileName: file.originalname,
+          fileType: file.mimetype,
+          fileUrl,
+          status: AttendanceDocumentStatus.UPLOADED,
         },
-      },
-    });
+        include: {
+          _count: {
+            select: { records: true },
+          },
+        },
+      });
 
-    return toAttendanceDocumentResponse(document);
+      return toAttendanceDocumentResponse(document);
+    } catch (error) {
+      await this.deleteUploadedFile(fileUrl);
+      throw error;
+    }
   }
 
   async getUploadedFile(fileName: string, userId: string) {
@@ -78,14 +82,8 @@ export class DocumentsService {
       throw new BadRequestException("Invalid upload file name.");
     }
 
-    const filePath = join(UPLOAD_DIRECTORY, fileName);
-
-    await access(filePath).catch(() => {
-      throw new NotFoundException("Uploaded file not found.");
-    });
-
     const document = await this.prisma.attendanceDocument.findFirst({
-      where: { fileUrl: `/uploads/${fileName}` },
+      where: { fileUrl: this.uploadStorage.fileUrlForObjectKey(fileName) },
       include: {
         event: {
           include: { members: true },
@@ -98,8 +96,9 @@ export class DocumentsService {
     }
 
     this.ensureCanAccessEvent(document.event, userId);
+    const fileContent = await this.uploadStorage.downloadFile(document.fileUrl);
 
-    return new StreamableFile(createReadStream(filePath), {
+    return new StreamableFile(Readable.from([fileContent]), {
       type: document.fileType ?? "application/octet-stream",
       disposition: `inline; filename="${document.fileName}"`,
     });
@@ -129,13 +128,8 @@ export class DocumentsService {
 
     this.ensureCanAccessEvent(document.event, userId);
 
-    await mkdir(UPLOAD_DIRECTORY, { recursive: true });
-
     const storedFileName = this.createStoredFileName(file.originalname);
-    const filePath = join(UPLOAD_DIRECTORY, storedFileName);
-    const nextFileUrl = `/uploads/${storedFileName}`;
-
-    await writeFile(filePath, file.buffer);
+    const nextFileUrl = await this.uploadStorage.uploadFile(storedFileName, file);
 
     try {
       const updatedDocument = await this.prisma.$transaction(async (tx) => {
@@ -255,8 +249,8 @@ export class DocumentsService {
       return;
     }
 
-    await unlink(join(UPLOAD_DIRECTORY, fileName)).catch(() => {
-      // The database is the source of truth; missing local files are harmless.
+    await this.uploadStorage.deleteFile(fileUrl).catch(() => {
+      // The database is the source of truth; missing stored files are harmless.
     });
   }
 }

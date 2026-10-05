@@ -61,7 +61,7 @@ The current app lets a user:
 - keep reviewer creation successful if invitation delivery fails
 - open invited events from `?eventId=...` links after the reviewer signs in
 - run a mock table extraction for a saved event
-- upload PDF or image attendance sheets into local file storage
+- upload PDF or image attendance sheets into Supabase Storage
 - list uploaded documents for an event
 - run local Windows OCR extraction against a selected uploaded image document
 - choose a page range when extracting PDF attendance sheets
@@ -114,7 +114,7 @@ The current app lets a user:
 - map AWS Textract table and key-value form blocks into reviewed records with
   bounding boxes and suggested fields for unmapped table columns
 - replace uploaded attendance sheets and clear their old extracted rows
-- delete uploaded attendance sheets with their extracted rows and local files
+- delete uploaded attendance sheets with their extracted rows and stored files
 - suggest missing template fields from OCR-detected sheet columns
 - route extraction through an OCR provider boundary with mock OCR as the fallback provider
 - map OCR columns with template labels, field keys, saved aliases, and common header variants
@@ -171,10 +171,16 @@ language as the frontend.
 - Database: PostgreSQL
 - ORM: Prisma
 - Styling: Tailwind CSS
-- Storage: local file storage first, cloud storage later
+- Storage: Supabase Storage for uploaded attendance sheets
 - OCR: local Windows OCR for image uploads, Azure Document Intelligence, Google
   Document AI, Google Vision, AWS Textract, generic HTTP OCR endpoint, mock OCR
   fallback, additional vendor-specific cloud OCR later
+
+## Deployment
+
+Vercel deployment notes live in
+[`docs/vercel-deployment.md`](docs/vercel-deployment.md). The current Vercel
+setup uses two projects: one for the NestJS API and one for the Next.js web app.
 
 ## Current Architecture
 
@@ -182,7 +188,8 @@ The backend is split into small NestJS modules:
 
 ```text
 apps/api/src/events/       # event, template, and template-field API
-apps/api/src/documents/    # local file upload and document listing
+apps/api/src/documents/    # upload endpoints and document listing
+apps/api/src/storage/      # Supabase Storage adapter for uploaded files
 apps/api/src/ocr/          # OCR provider interface, provider selection, mock and Windows OCR
 apps/api/src/records/      # extraction persistence, review rows, approve/reject
 apps/api/src/prisma/       # Prisma client service/module
@@ -240,11 +247,11 @@ packages/shared/src/template-utils.ts
     least one owner remains, and the legacy `ownerId` is kept pointed at an
     owner for compatibility. Focused API tests cover promotion, demotion,
     last-owner protection, and reviewer denial.
-15. Add document lifecycle cleanup. Done for local storage:
+15. Add document lifecycle cleanup. Done for Supabase-backed storage:
     event members can replace an uploaded attendance sheet, which clears that
     document's old extracted rows and resets it to uploaded; event members can
     delete an uploaded sheet, which deletes its extracted rows and removes the
-    local file when it lives under `/uploads`. Focused API tests cover delete,
+    stored file when it lives under `/uploads`. Focused API tests cover delete,
     replace, row cleanup, and outsider denial.
 16. Add first multi-page PDF extraction controls. Done for provider-boundary
     support:
@@ -332,7 +339,7 @@ packages/shared/src/template-utils.ts
     selection.
 27. Add a first vendor-specific cloud OCR adapter. Done for Azure Document
     Intelligence:
-    `OCR_PROVIDER="azure"` now posts local uploaded document bytes to Azure
+    `OCR_PROVIDER="azure"` now posts uploaded document bytes to Azure
     Document Intelligence, polls the provider's async result URL, maps layout
     table cells back onto saved template fields, normalizes values by field
     type, preserves bounding boxes, and returns suggested fields for unmapped
@@ -430,7 +437,7 @@ packages/shared/src/template-utils.ts
     construction, provider setup validation, file-type inference, and summary
     redaction.
 39. Add another vendor-specific cloud OCR adapter. Done for Google Document AI:
-    `OCR_PROVIDER="google"` now posts local uploaded document bytes to the
+    `OCR_PROVIDER="google"` now posts uploaded document bytes to the
     Google Document AI online processing API, maps table rows and form fields
     back onto saved template fields, normalizes values by field type, preserves
     normalized bounding boxes, and returns suggested fields for unmapped table
@@ -453,7 +460,7 @@ packages/shared/src/template-utils.ts
     payloads, table mapping, form mapping, explicit provider selection,
     auto-mode routing, readiness reporting, and smoke-runner validation.
 41. Add another vendor-specific cloud OCR adapter. Done for AWS Textract:
-    `OCR_PROVIDER="aws-textract"` now signs and posts local uploaded document
+    `OCR_PROVIDER="aws-textract"` now signs and posts uploaded document
     bytes to Textract `AnalyzeDocument`, maps table cells and key-value form
     blocks back onto saved template fields, normalizes values by field type,
     preserves normalized bounding boxes, and returns suggested fields for
@@ -865,10 +872,10 @@ OCR_HTTP_DIRECT_PDF="false"
   configured HTTP OCR endpoint when available, then mock rows.
 - `mock` always generates mock rows.
 - `windows` requires local Windows OCR for uploaded image files.
-- `azure` sends local uploaded documents to Azure Document Intelligence.
-- `google` sends local uploaded documents to Google Document AI.
+- `azure` sends uploaded document bytes to Azure Document Intelligence.
+- `google` sends uploaded document bytes to Google Document AI.
 - `google-vision` sends local image documents to Google Vision.
-- `aws-textract` sends local uploaded documents to AWS Textract.
+- `aws-textract` sends uploaded document bytes to AWS Textract.
 - `http` sends a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
 
 When `OCR_PROVIDER="azure"`, set `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` and
@@ -1149,12 +1156,12 @@ Already done:
   metadata, base64 file content, template fields, and extraction options to
   `OCR_HTTP_ENDPOINT`; in `auto` mode, CrowdLog can try this HTTP OCR bridge
   before mock fallback when Windows OCR is unavailable
-- `OCR_PROVIDER="azure"` can send local uploaded documents to Azure Document
+- `OCR_PROVIDER="azure"` can send uploaded document bytes to Azure Document
   Intelligence, poll the async analyze result, map layout tables into saved
   template fields, preserve bounding boxes, return suggested fields for unmapped
   columns, and run before the generic HTTP bridge in `auto` mode when Azure is
   configured
-- `OCR_PROVIDER="google"` can send local uploaded documents to Google Document
+- `OCR_PROVIDER="google"` can send uploaded document bytes to Google Document
   AI, post base64 raw document content to the online processing API, map tables
   and form fields into saved template fields, preserve bounding boxes, return
   suggested fields for unmapped columns, and run before the generic HTTP bridge
@@ -1164,7 +1171,7 @@ Already done:
   table rows or simple label/value form rows, preserve bounding boxes, return
   suggested fields for unmapped columns, and run before the generic HTTP bridge
   in `auto` mode when Google Vision credentials are configured
-- `OCR_PROVIDER="aws-textract"` can send local uploaded documents to AWS
+- `OCR_PROVIDER="aws-textract"` can send uploaded document bytes to AWS
   Textract `AnalyzeDocument`, sign REST requests with AWS Signature Version 4,
   map table cells and key-value form blocks into saved template fields,
   preserve bounding boxes, return suggested fields for unmapped columns, and
@@ -1181,7 +1188,7 @@ Already done:
   command, with optional per-run summary files, an aggregate
   `OCR_SMOKE_MATRIX_SUMMARY_FILE`, and redacted failure diagnostics when
   `OCR_SMOKE_CONTINUE_ON_ERROR="true"`
-- Uploaded documents can be replaced or deleted, with extracted rows and local files cleaned up
+- Uploaded documents can be replaced or deleted, with extracted rows and stored files cleaned up
 - OCR can suggest missing uploaded sheet columns, such as `taxa`
 - Windows OCR can map columns using labels, keys, aliases, and common header variants
 - Windows OCR can clean and validate extracted values by field type and lower confidence for suspicious cells

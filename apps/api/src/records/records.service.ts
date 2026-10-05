@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import {
   AttendanceDocumentStatus,
   AttendanceRecordStatus,
@@ -9,7 +9,6 @@ import {
 } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
 import {
   OCR_PROVIDER,
   type OcrExtractedRow,
@@ -22,6 +21,7 @@ import {
   type RenderedPdfPage,
 } from "../ocr/pdf-page-renderer";
 import { PrismaService } from "../prisma/prisma.service";
+import { UploadStorageService } from "../storage/upload-storage.service";
 import {
   type CreateAttendanceRecordInputDto,
   type CreateAttendanceRecordsDto,
@@ -163,6 +163,8 @@ export class RecordsService {
     @Inject(OCR_PROVIDER) private readonly ocrProvider: OcrProvider,
     private readonly prisma: PrismaService,
     private readonly pdfPageRenderer?: PdfPageRenderer,
+    @Optional()
+    private readonly uploadStorage: UploadStorageService = new UploadStorageService(),
   ) {}
 
   async listRecords(eventId: string, userId: string) {
@@ -369,18 +371,33 @@ export class RecordsService {
     this.ensureCanAccessEvent(document.event, userId);
 
     const template = await this.getEventTemplate(document.eventId, userId);
-    const extractionOptions = await this.toExtractionOptions(document, dto);
+    let localFilePath: string | undefined;
+    let extractionOptions: OcrExtractionOptions = {
+      rowCount: dto.rowCount,
+      layout: dto.layout,
+    };
     let extraction: OcrExtractionResult;
 
     try {
+      localFilePath = await this.uploadStorage.downloadToTempFile(
+        document.fileUrl,
+      );
+      extractionOptions = await this.toExtractionOptions(
+        document,
+        dto,
+        localFilePath,
+      );
       extraction = await this.extractDocumentWithOptions(
         document,
         template,
         extractionOptions,
+        localFilePath,
       );
     } catch (error) {
       await this.recordExtractionFailure(document, extractionOptions, error);
       throw error;
+    } finally {
+      await this.uploadStorage.cleanupTempFile(localFilePath);
     }
 
     const result = await this.prisma.$transaction(
@@ -1071,23 +1088,10 @@ export class RecordsService {
     return String(value);
   }
 
-  private toUploadedFilePath(fileUrl: string) {
-    if (!fileUrl.startsWith("/uploads/")) {
-      return undefined;
-    }
-
-    const fileName = fileUrl.replace("/uploads/", "");
-
-    if (fileName !== basename(fileName)) {
-      return undefined;
-    }
-
-    return resolve(process.cwd(), "uploads", fileName);
-  }
-
   private async toExtractionOptions(
-    document: Pick<AttendanceDocument, "fileType" | "fileUrl">,
+    document: Pick<AttendanceDocument, "fileType">,
     dto: MockExtractDto,
+    filePath: string | undefined,
   ): Promise<OcrExtractionOptions> {
     const options: OcrExtractionOptions = {
       rowCount: dto.rowCount,
@@ -1098,9 +1102,7 @@ export class RecordsService {
       return options;
     }
 
-    const totalPages = await this.detectPdfPageCount(
-      this.toUploadedFilePath(document.fileUrl),
-    );
+    const totalPages = await this.detectPdfPageCount(filePath);
     const pageStart = Math.min(dto.pageStart ?? 1, totalPages);
     const requestedPageCount = dto.pageCount ?? 1;
     const pageCount = Math.min(
@@ -1135,6 +1137,7 @@ export class RecordsService {
     document: AttendanceDocument,
     template: TemplateWithFields,
     options: OcrExtractionOptions,
+    filePath: string | undefined,
   ): Promise<OcrExtractionResult> {
     const documentInput = {
       id: document.id,
@@ -1142,7 +1145,7 @@ export class RecordsService {
       fileName: document.fileName,
       fileType: document.fileType,
       fileUrl: document.fileUrl,
-      filePath: this.toUploadedFilePath(document.fileUrl),
+      filePath,
     };
 
     if (document.fileType !== "application/pdf") {

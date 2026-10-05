@@ -71,7 +71,7 @@ export class WindowsOcrProvider implements OcrProvider {
 
   async extract(input: OcrExtractionInput): Promise<OcrExtractionResult> {
     if (!input.document.filePath) {
-      throw new Error("Windows OCR requires a local uploaded document file.");
+      throw new Error("Windows OCR requires a downloaded document file.");
     }
 
     const ocr = await this.runWindowsOcr(input.document.filePath);

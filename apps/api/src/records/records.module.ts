@@ -2,11 +2,12 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { OcrModule } from "../ocr/ocr.module";
 import { PrismaModule } from "../prisma/prisma.module";
+import { StorageModule } from "../storage/storage.module";
 import { RecordsController } from "./records.controller";
 import { RecordsService } from "./records.service";
 
 @Module({
-  imports: [AuthModule, PrismaModule, OcrModule],
+  imports: [AuthModule, PrismaModule, OcrModule, StorageModule],
   controllers: [RecordsController],
   providers: [RecordsService],
 })

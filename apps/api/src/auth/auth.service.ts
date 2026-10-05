@@ -81,26 +81,30 @@ export class AuthService {
   }
 
   sessionCookie(token: string, expiresAt: Date) {
+    const sameSite = this.cookieSameSite();
+
     return [
       `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}`,
       "Path=/",
       "HttpOnly",
-      "SameSite=Lax",
+      `SameSite=${sameSite}`,
       `Expires=${expiresAt.toUTCString()}`,
-      process.env.NODE_ENV === "production" ? "Secure" : "",
+      this.shouldUseSecureCookie(sameSite) ? "Secure" : "",
     ]
       .filter(Boolean)
       .join("; ");
   }
 
   clearSessionCookie() {
+    const sameSite = this.cookieSameSite();
+
     return [
       `${AUTH_COOKIE_NAME}=`,
       "Path=/",
       "HttpOnly",
-      "SameSite=Lax",
+      `SameSite=${sameSite}`,
       "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-      process.env.NODE_ENV === "production" ? "Secure" : "",
+      this.shouldUseSecureCookie(sameSite) ? "Secure" : "",
     ]
       .filter(Boolean)
       .join("; ");
@@ -142,6 +146,17 @@ export class AuthService {
 
   private hashToken(token: string) {
     return createHash("sha256").update(token).digest("hex");
+  }
+
+  private cookieSameSite() {
+    return process.env.AUTH_COOKIE_SAMESITE?.trim() || "Lax";
+  }
+
+  private shouldUseSecureCookie(sameSite: string) {
+    return (
+      process.env.NODE_ENV === "production" ||
+      sameSite.toLowerCase() === "none"
+    );
   }
 
   private sessionTokenFromCookie(cookieHeader: string | undefined) {

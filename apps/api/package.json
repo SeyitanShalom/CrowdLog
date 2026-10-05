@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "dev": "node --watch dist/main.js",
     "test:api": "npm run build && node --test test/ocr-value-normalization.test.cjs test/windows-ocr-form-layout.test.cjs test/http-ocr-provider.test.cjs test/azure-document-intelligence-ocr-provider.test.cjs test/google-document-ai-ocr-provider.test.cjs test/google-vision-ocr-provider.test.cjs test/aws-textract-ocr-provider.test.cjs test/ocr-deployment-check.test.cjs test/ocr-provider-smoke-check.test.cjs test/auth-session.test.cjs test/event-role-access.test.cjs test/document-lifecycle.test.cjs test/pdf-extraction-options.test.cjs test/invitation-email.test.cjs",
@@ -23,12 +23,15 @@
     "@nestjs/core": "^12.0.3",
     "@nestjs/platform-express": "^12.0.3",
     "@prisma/client": "^6.17.0",
+    "@supabase/supabase-js": "^2.117.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "prisma": "^6.17.0"
+    "@types/node": "^20",
+    "prisma": "^6.17.0",
+    "typescript": "^5"
   }
 }

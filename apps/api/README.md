@@ -43,6 +43,19 @@ Connect panel. The direct connection string uses `db.[PROJECT-REF].supabase.co`,
 which may require IPv6. The shared Session pooler is reachable over IPv4 and is
 the better fit for local development on many networks.
 
+Uploaded attendance sheets are stored in Supabase Storage. Create a private
+bucket and set:
+
+```env
+SUPABASE_URL="https://your-project-ref.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY=""
+SUPABASE_STORAGE_BUCKET="attendance-uploads"
+```
+
+The API keeps returning `/uploads/:fileName` URLs and authorizes reads through
+the existing authenticated route, while the file bytes live in the configured
+Supabase bucket.
+
 The repo includes a root `docker-compose.yml` for local PostgreSQL. If Docker is
 installed, run this from the repo root:
 
@@ -107,8 +120,8 @@ The API selects an OCR provider with `OCR_PROVIDER`:
   falls back through the configured cloud providers and mock rows.
 - `mock` always generates mock review rows.
 - `windows` requires local Windows OCR and fails if it cannot run.
-- `azure` sends local uploaded documents to Azure Document Intelligence.
-- `google` sends local uploaded documents to Google Document AI.
+- `azure` sends uploaded document bytes to Azure Document Intelligence.
+- `google` sends uploaded document bytes to Google Document AI.
 - `http` posts a provider-neutral OCR request to `OCR_HTTP_ENDPOINT`.
 
 Cloud OCR configuration:

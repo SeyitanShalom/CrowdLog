@@ -14,7 +14,7 @@ import type {
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
-  "http://localhost:4000";
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:4000");
 
 export type CreateEventPayload = {
   title: string;

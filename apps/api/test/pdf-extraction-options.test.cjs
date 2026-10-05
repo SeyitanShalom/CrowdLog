@@ -17,6 +17,13 @@ function mockFn(implementation) {
   return fn;
 }
 
+function mockUploadStorage(filePath) {
+  return {
+    downloadToTempFile: mockFn(async () => filePath),
+    cleanupTempFile: mockFn(async () => undefined),
+  };
+}
+
 const now = new Date("2026-09-30T00:00:00.000Z");
 
 function templateField() {
@@ -39,6 +46,7 @@ function pdfExtractionFixture({
   ocrProvider,
   renderer,
   fileName = "attendance.pdf",
+  filePath,
 }) {
   const fileUrl = `/uploads/${fileName}`;
   const tx = {
@@ -115,7 +123,12 @@ function pdfExtractionFixture({
   };
 
   return {
-    service: new RecordsService(ocrProvider, prisma, renderer),
+    service: new RecordsService(
+      ocrProvider,
+      prisma,
+      renderer,
+      mockUploadStorage(filePath),
+    ),
     prisma,
     tx,
   };
@@ -213,7 +226,12 @@ test("PDF document extraction clamps requested page range to detected pages", as
       };
     }),
   };
-  const service = new RecordsService(ocrProvider, prisma);
+  const service = new RecordsService(
+    ocrProvider,
+    prisma,
+    undefined,
+    mockUploadStorage(filePath),
+  );
 
   try {
     await service.extractDocument(
@@ -301,7 +319,12 @@ test("document extraction passes requested form layout to the OCR provider", asy
       };
     }),
   };
-  const service = new RecordsService(ocrProvider, prisma);
+  const service = new RecordsService(
+    ocrProvider,
+    prisma,
+    undefined,
+    mockUploadStorage(),
+  );
 
   await service.extractDocument(
     "document_form",
@@ -419,7 +442,12 @@ test("PDF document extraction renders pages before OCR when a renderer is availa
     })),
     cleanupRenderedPages: mockFn(async () => null),
   };
-  const service = new RecordsService(ocrProvider, prisma, renderer);
+  const service = new RecordsService(
+    ocrProvider,
+    prisma,
+    renderer,
+    mockUploadStorage(),
+  );
 
   await service.extractDocument(
     "document_pdf",
@@ -514,6 +542,7 @@ test("PDF document extraction records rendered page OCR failures with page diagn
     ocrProvider,
     renderer,
     fileName,
+    filePath,
   });
 
   process.env.OCR_PDF_RENDER_MODE = "render-pages";
