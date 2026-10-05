@@ -8,7 +8,9 @@ const {
   inferFileType,
   normalizeProviderName,
   readSmokeConfig,
+  readSmokeRunConfigs,
   runSmokeCheck,
+  runSmokeChecks,
   summarizeExtraction,
   validateProviderEnvironment,
 } = require("../scripts/ocr-provider-smoke-check.cjs");
@@ -161,6 +163,169 @@ test("OCR provider smoke check writes a sanitized summary artifact", async () =>
       delete process.env.GOOGLE_VISION_API_KEY;
     } else {
       process.env.GOOGLE_VISION_API_KEY = previousVisionApiKey;
+    }
+
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("OCR provider smoke matrix config builds repeated provider runs", async () => {
+  const tempDir = join(process.cwd(), ".tmp", "ocr-provider-smoke-matrix-config-test");
+  const pdfPath = join(tempDir, "sample.pdf");
+  const imagePath = join(tempDir, "sample.png");
+
+  await mkdir(tempDir, { recursive: true });
+  await writeFile(pdfPath, "%PDF-1.7\n");
+  await writeFile(imagePath, "png");
+
+  try {
+    const configs = readSmokeRunConfigs(
+      {
+        OCR_SMOKE_RUNS_JSON: JSON.stringify([
+          {
+            name: "Azure table sample",
+            provider: "azure",
+            file: pdfPath,
+            pageCount: 2,
+            summaryFile: join(tempDir, "azure-summary.json"),
+          },
+          {
+            name: "Vision image sample",
+            provider: "vision",
+            file: imagePath,
+            fileType: "image/png",
+            layout: "form",
+            fields: [
+              {
+                label: "Name",
+                key: "name",
+                type: "text",
+                required: true,
+              },
+            ],
+          },
+        ]),
+      },
+      process.cwd(),
+    );
+
+    assert.equal(configs.length, 2);
+    assert.equal(configs[0].runName, "Azure table sample");
+    assert.equal(configs[0].provider, "azure");
+    assert.equal(configs[0].pageCount, 2);
+    assert.equal(configs[0].summaryFilePath, join(tempDir, "azure-summary.json"));
+    assert.equal(configs[1].runName, "Vision image sample");
+    assert.equal(configs[1].provider, "google-vision");
+    assert.equal(configs[1].fileType, "image/png");
+    assert.equal(configs[1].layout, "form");
+    assert.deepEqual(
+      configs[1].fields.map((field) => ({
+        key: field.key,
+        type: field.type,
+        required: field.required,
+      })),
+      [{ key: "name", type: "TEXT", required: true }],
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("OCR provider smoke matrix captures redacted provider failures", async () => {
+  const tempDir = join(process.cwd(), ".tmp", "ocr-provider-smoke-matrix-test");
+  const summaryPath = join(tempDir, "matrix-summary.json");
+  const field = templateField({ key: "name", label: "Name" });
+  const previousVisionApiKey = process.env.GOOGLE_VISION_API_KEY;
+  const previousHttpEndpoint = process.env.OCR_HTTP_ENDPOINT;
+
+  try {
+    process.env.GOOGLE_VISION_API_KEY = "vision-test-key";
+    process.env.OCR_HTTP_ENDPOINT = "https://ocr-provider.example/extract";
+
+    const matrixSummary = await runSmokeChecks(
+      [
+        {
+          runName: "vision-image",
+          provider: "google-vision",
+          fileName: "sample.png",
+          fileType: "image/png",
+          fields: [field],
+          layout: "table",
+          rowCount: 10,
+          pageStart: 1,
+          pageCount: 1,
+          requireRows: true,
+        },
+        {
+          runName: "http-pdf",
+          provider: "http",
+          fileName: "sample.pdf",
+          fileType: "application/pdf",
+          fields: [field],
+          layout: "table",
+          rowCount: 10,
+          pageStart: 1,
+          pageCount: 1,
+          requireRows: true,
+        },
+      ],
+      (provider) => ({
+        extract: async () => {
+          if (provider === "http") {
+            throw new Error(
+              "HTTP OCR failed authorization: Bearer http-token api_key=http-secret",
+            );
+          }
+
+          return {
+            providerName: "google-vision",
+            rawOcrJson: { provider: "google-vision" },
+            rows: [
+              {
+                rowNumber: 1,
+                data: { name: "Ada Okafor" },
+                values: [
+                  {
+                    field,
+                    confidence: 0.88,
+                    issues: [],
+                  },
+                ],
+                confidenceScore: 0.88,
+              },
+            ],
+            suggestedFields: [],
+          };
+        },
+      }),
+      {
+        continueOnError: true,
+        summaryFilePath: summaryPath,
+      },
+    );
+    const written = await readFile(summaryPath, "utf8");
+
+    assert.equal(matrixSummary.ok, false);
+    assert.equal(matrixSummary.runCount, 2);
+    assert.equal(matrixSummary.passed, 1);
+    assert.equal(matrixSummary.failed, 1);
+    assert.equal(matrixSummary.runs[0].ok, true);
+    assert.equal(matrixSummary.runs[1].ok, false);
+    assert.equal(matrixSummary.runs[1].requestedProvider, "http");
+    assert.match(matrixSummary.runs[1].error.message, /Bearer \[redacted\]/);
+    assert.match(matrixSummary.runs[1].error.message, /api_key=\[redacted\]/);
+    assert.doesNotMatch(written, /Ada Okafor|http-token|http-secret/);
+  } finally {
+    if (previousVisionApiKey === undefined) {
+      delete process.env.GOOGLE_VISION_API_KEY;
+    } else {
+      process.env.GOOGLE_VISION_API_KEY = previousVisionApiKey;
+    }
+
+    if (previousHttpEndpoint === undefined) {
+      delete process.env.OCR_HTTP_ENDPOINT;
+    } else {
+      process.env.OCR_HTTP_ENDPOINT = previousHttpEndpoint;
     }
 
     await rm(tempDir, { recursive: true, force: true });

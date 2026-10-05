@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build:test": "tsc -p tsconfig.test.json",
+    "test:shared": "npm run build:test && node --test test/template-utils.test.mjs"
+  },
   "exports": {
     ".": "./src/index.ts"
   }

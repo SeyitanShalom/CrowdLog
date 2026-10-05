@@ -142,6 +142,69 @@ export type MockExtractionResult = {
   suggestedFields: OcrFieldSuggestion[];
 };
 
+export type RecordStatusCounts = {
+  total: number;
+  reviewed: number;
+  approved: number;
+  rejected: number;
+  needsReview: number;
+  draft: number;
+};
+
+export type EventRecordAnalytics = {
+  eventId: string;
+  generatedAt: string;
+  summary: RecordStatusCounts & {
+    reviewRate: number;
+    approvalRate: number;
+    rejectionRate: number;
+    averageConfidence: number | null;
+    lowConfidenceRecords: number;
+    validationIssueCells: number;
+  };
+  documents: Array<
+    RecordStatusCounts & {
+      id: string;
+      name: string;
+      status: string;
+      reviewRate: number;
+      averageConfidence: number | null;
+      validationIssueCells: number;
+      lastActivityAt: string | null;
+    }
+  >;
+  reviewers: Array<{
+    userId: string;
+    email: string;
+    name: string | null;
+    role: EventMemberRole;
+    reviewed: number;
+    approved: number;
+    rejected: number;
+    shareOfReviewed: number;
+    lastReviewedAt: string | null;
+  }>;
+  fields: Array<{
+    fieldId: string;
+    key: string;
+    label: string;
+    type: FieldType;
+    required: boolean;
+    populatedRecords: number;
+    blankRecords: number;
+    issueCells: number;
+    lowConfidenceCells: number;
+    averageConfidence: number | null;
+  }>;
+  activity: Array<{
+    date: string;
+    createdRecords: number;
+    reviewedRecords: number;
+    approvedRecords: number;
+    rejectedRecords: number;
+  }>;
+};
+
 export type DraftField = {
   id: string;
   label: string;

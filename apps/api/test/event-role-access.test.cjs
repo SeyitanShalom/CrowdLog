@@ -7,6 +7,7 @@ const {
   NotFoundException,
 } = require("@nestjs/common");
 const {
+  AttendanceDocumentStatus,
   AttendanceRecordStatus,
   EventMemberRole,
 } = require("@prisma/client");
@@ -137,6 +138,44 @@ function recordResponse(status = AttendanceRecordStatus.APPROVED) {
     status,
     document: null,
     values: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function analyticsRecord(overrides = {}) {
+  const document = overrides.document ?? null;
+
+  return {
+    id: "record_analytics",
+    eventId: "event_1",
+    documentId: document?.id ?? overrides.documentId ?? "document_1",
+    reviewedByUserId: null,
+    reviewedBy: null,
+    reviewedAt: null,
+    rowNumber: 1,
+    dataJson: {},
+    confidenceScore: 0.9,
+    status: AttendanceRecordStatus.DRAFT,
+    document,
+    values: [],
+    createdAt: new Date("2026-09-27T09:00:00.000Z"),
+    updatedAt: new Date("2026-09-27T09:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function analyticsValue(field, normalizedValue, confidence, issues = []) {
+  return {
+    id: `value_${field.id}_${Math.random().toString(36).slice(2)}`,
+    recordId: "record_analytics",
+    fieldId: field.id,
+    field,
+    rawValue: normalizedValue,
+    normalizedValue,
+    confidence,
+    validationIssues: issues,
+    boundingBox: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -1008,6 +1047,213 @@ test("outsiders cannot list event records", async () => {
     NotFoundException,
   );
   assert.equal(prisma.attendanceRecord.findMany.calls.length, 0);
+});
+
+test("reviewers can view advanced record analytics for events where they are members", async () => {
+  const createdAt = new Date("2026-09-27T09:00:00.000Z");
+  const reviewedAt = new Date("2026-09-28T10:30:00.000Z");
+  const nameField = templateField();
+  const emailField = emailTemplateField();
+  const document = {
+    id: "document_1",
+    eventId: "event_1",
+    fileName: "week 1.csv",
+    fileType: "text/csv",
+    fileUrl: "/uploads/week-1.csv",
+    status: AttendanceDocumentStatus.EXTRACTED,
+    rawOcrJson: null,
+    createdAt,
+    updatedAt: reviewedAt,
+  };
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () =>
+        eventResponse({
+          members: [
+            {
+              id: "member_reviewer",
+              eventId: "event_1",
+              userId: "user_reviewer",
+              role: EventMemberRole.REVIEWER,
+              createdAt,
+              updatedAt: reviewedAt,
+              user: {
+                id: "user_reviewer",
+                email: "reviewer@example.com",
+                name: "Reviewer",
+              },
+            },
+          ],
+          templates: [
+            {
+              id: "template_1",
+              eventId: "event_1",
+              name: "Default attendance template",
+              isDefault: true,
+              createdAt,
+              updatedAt: reviewedAt,
+              fields: [nameField, emailField],
+            },
+          ],
+          documents: [document],
+          records: [
+            analyticsRecord({
+              id: "record_1",
+              document,
+              reviewedByUserId: "user_reviewer",
+              reviewedBy: {
+                id: "user_reviewer",
+                email: "reviewer@example.com",
+                name: "Reviewer",
+              },
+              reviewedAt,
+              status: AttendanceRecordStatus.APPROVED,
+              confidenceScore: 0.92,
+              dataJson: {
+                name: "Ada",
+                email: "ada@example.com",
+              },
+              values: [
+                analyticsValue(nameField, "Ada", 0.96),
+                analyticsValue(emailField, "ada@example.com", 0.9),
+              ],
+            }),
+            analyticsRecord({
+              id: "record_2",
+              document,
+              status: AttendanceRecordStatus.NEEDS_REVIEW,
+              confidenceScore: 0.61,
+              dataJson: {
+                name: "",
+                email: "not-an-email",
+              },
+              values: [
+                analyticsValue(nameField, "", 0.55, ["Required value missing."]),
+                analyticsValue(emailField, "not-an-email", 0.58, [
+                  "Expected a valid email.",
+                ]),
+              ],
+            }),
+            analyticsRecord({
+              id: "record_3",
+              documentId: null,
+              document: null,
+              reviewedByUserId: null,
+              reviewedAt,
+              status: AttendanceRecordStatus.REJECTED,
+              confidenceScore: 0.8,
+              dataJson: {
+                name: "Manual Row",
+                email: "",
+              },
+              values: [
+                analyticsValue(nameField, "Manual Row", 0.8),
+                analyticsValue(emailField, "", 0.8),
+              ],
+            }),
+          ],
+        }),
+      ),
+    },
+  };
+  const service = new RecordsService({ extract: mockFn() }, prisma);
+
+  const analytics = await service.getRecordAnalytics("event_1", "user_reviewer");
+
+  assert.equal(analytics.summary.total, 3);
+  assert.equal(analytics.summary.reviewed, 2);
+  assert.equal(analytics.summary.needsReview, 1);
+  assert.equal(analytics.summary.reviewRate, 67);
+  assert.equal(analytics.summary.approvalRate, 33);
+  assert.equal(analytics.summary.averageConfidence, 0.78);
+  assert.equal(analytics.summary.lowConfidenceRecords, 1);
+  assert.equal(analytics.summary.validationIssueCells, 2);
+  assert.equal(analytics.documents.length, 2);
+  assert.deepEqual(
+    analytics.documents.map((entry) => ({
+      id: entry.id,
+      total: entry.total,
+      reviewed: entry.reviewed,
+      reviewRate: entry.reviewRate,
+      issueCells: entry.validationIssueCells,
+    })),
+    [
+      {
+        id: "manual",
+        total: 1,
+        reviewed: 1,
+        reviewRate: 100,
+        issueCells: 0,
+      },
+      {
+        id: "document_1",
+        total: 2,
+        reviewed: 1,
+        reviewRate: 50,
+        issueCells: 2,
+      },
+    ],
+  );
+  assert.deepEqual(
+    analytics.reviewers.map((entry) => ({
+      userId: entry.userId,
+      reviewed: entry.reviewed,
+      shareOfReviewed: entry.shareOfReviewed,
+    })),
+    [
+      {
+        userId: "user_reviewer",
+        reviewed: 1,
+        shareOfReviewed: 50,
+      },
+      {
+        userId: "unattributed",
+        reviewed: 1,
+        shareOfReviewed: 50,
+      },
+    ],
+  );
+  assert.deepEqual(
+    analytics.fields.map((entry) => ({
+      key: entry.key,
+      populatedRecords: entry.populatedRecords,
+      blankRecords: entry.blankRecords,
+      issueCells: entry.issueCells,
+      lowConfidenceCells: entry.lowConfidenceCells,
+    })),
+    [
+      {
+        key: "name",
+        populatedRecords: 2,
+        blankRecords: 1,
+        issueCells: 1,
+        lowConfidenceCells: 1,
+      },
+      {
+        key: "email",
+        populatedRecords: 2,
+        blankRecords: 1,
+        issueCells: 1,
+        lowConfidenceCells: 1,
+      },
+    ],
+  );
+  assert.deepEqual(analytics.activity, [
+    {
+      date: "2026-09-27",
+      createdRecords: 3,
+      reviewedRecords: 0,
+      approvedRecords: 0,
+      rejectedRecords: 0,
+    },
+    {
+      date: "2026-09-28",
+      createdRecords: 0,
+      reviewedRecords: 2,
+      approvedRecords: 1,
+      rejectedRecords: 1,
+    },
+  ]);
 });
 
 test("reviewers can export full event records as CSV", async () => {

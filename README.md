@@ -123,27 +123,31 @@ The current app lets a user:
 - show OCR validation issue text in the review table
 - run focused OCR normalization and provider adapter tests
 - run focused OCR smoke-runner tests
+- run focused shared template-helper tests
 - run focused API auth/session and role-access tests
 - clean common low-resolution OCR glyph mistakes in headers and values
 - use adaptive Windows OCR row grouping and center-based column matching
 - use Windows OCR label/value matching for first-pass form-layout extraction
+- parse compact inline form tokens such as `Name:Ada` through Windows OCR
 - review extracted records in an editable table
 - save, approve, or reject extracted rows as an event member
 - record which reviewer approved or rejected each row
 - search review rows by row, status, document, or field values
 - filter review rows by status
 - see review summary counts for visible, reviewed, approved, rejected, needs-review, and draft rows
-- see reporting panels for event completion, document progress, and reviewer progress
+- see analytics dashboards for event completion, document progress, reviewer
+  throughput, field quality, confidence, validation issues, and activity trends
 - export the currently visible review rows to CSV
 - export all event review rows from the server to CSV
 - export all event review rows from the server to Excel
+- split the large frontend builder into smaller auth, review, reporting, and
+  helper modules while keeping the builder as the workflow coordinator
 - document the portfolio case study and screenshot shot list
 - seed an anonymized portfolio demo event for screenshot capture
 - capture portfolio screenshots with a Chrome/Edge headless script
 - store the captured five-image portfolio screenshot gallery in `docs/screenshots`
 
-There is no external auth provider, external export API, or advanced analytics
-yet.
+There is no external auth provider or external export API yet.
 
 The project is now organized as an npm workspace monorepo:
 
@@ -184,15 +188,22 @@ apps/api/src/records/      # extraction persistence, review rows, approve/reject
 apps/api/src/prisma/       # Prisma client service/module
 ```
 
-The frontend currently has one main working screen:
+The frontend builder is split into a main workflow coordinator and focused
+review/auth modules:
 
 ```text
-apps/web/src/app/_components/template-builder.tsx
+apps/web/src/app/_components/template-builder.tsx                  # state and workflow orchestration
+apps/web/src/app/_components/template-builder/auth-panel.tsx       # local session controls
+apps/web/src/app/_components/template-builder/review-workspace.tsx # document, team, review, and reporting UI
+apps/web/src/app/_components/template-builder/constants.ts         # shared UI labels
+apps/web/src/app/_components/template-builder/event-access.ts      # member role helpers
+apps/web/src/app/_components/template-builder/review-utils.ts      # review filtering/export/report helpers
+apps/web/src/app/_components/template-builder/types.ts             # local UI types
 ```
 
-It contains the event/template builder and the review workspace. This file is
-now large and should eventually be split into smaller components, but it is
-kept together for now while the workflow is still changing quickly.
+The main builder still owns the event/template draft and review workflow state,
+while the extracted modules keep the auth panel, review table, document tools,
+team panel, reporting panels, and helper logic easier to change independently.
 
 Shared types live in:
 
@@ -220,11 +231,10 @@ packages/shared/src/template-utils.ts
 13. Add export, search, filters, and portfolio polish. Done for the current
     portfolio pass:
     visible-row CSV export, server-side full-event CSV/Excel export, search,
-    status filters, review summary counts, reviewer attribution, and basic
-    reporting panels are done in the review workspace. The portfolio case study
-    and screenshot capture guide are documented, the anonymized demo can be
-    seeded, and the five-image screenshot gallery has been captured in
-    `docs/screenshots`.
+    status filters, review summary counts, reviewer attribution, and reporting
+    panels are done in the review workspace. The portfolio case study and
+    screenshot capture guide are documented, the anonymized demo can be seeded,
+    and the five-image screenshot gallery has been captured in `docs/screenshots`.
 14. Add role-management follow-up controls. Done for compact owner controls:
     owners can promote reviewers to owners, demote owners to reviewers when at
     least one owner remains, and the legacy `ownerId` is kept pointed at an
@@ -477,6 +487,49 @@ packages/shared/src/template-utils.ts
     STARTTLS, and configurable timeouts. Focused API tests cover SMTP command
     flow, MIME headers, auth, provider result metadata, and required
     configuration validation.
+45. Add advanced analytics dashboards. Done:
+    event members can request `GET /events/:eventId/records/analytics` for
+    server-side review analytics covering status totals, completion rates,
+    confidence, validation issue cells, document progress, reviewer throughput,
+    field quality, and daily activity. The review workspace now loads that
+    analytics payload alongside documents and records, refreshes it after row
+    and document mutations, and shows expanded reporting panels for field
+    quality and recent activity. Focused API tests cover member access, status
+    rates, document progress, reviewer attribution, field-quality metrics, and
+    activity buckets.
+46. Break the large frontend builder into smaller modules. Done for the first
+    component split:
+    the main `template-builder.tsx` now keeps orchestration, event/template
+    draft state, and API mutations, while auth UI, review workspace UI, shared
+    labels, member-access helpers, review filtering, export helpers, and local
+    UI types live under `apps/web/src/app/_components/template-builder/`.
+    The frontend production build passes after the split.
+47. Broaden automated tests. Done for shared template helpers:
+    `@crowdlog/shared` now has a focused `node --test` suite for field-key
+    normalization, duplicate key suffixing, comma-list parsing, and draft-only
+    client id creation. The root `npm run test:shared` script compiles the
+    shared TypeScript package to ignored build output before running the tests.
+48. Broaden form-layout OCR parsing. Done for compact inline label/value tokens:
+    Windows form extraction now preserves values when OCR merges a label and
+    its value into one token or tight span such as `Name:Ada` or
+    `Email:ada@example.com`. Focused Windows OCR tests cover inline text,
+    email, phone, and signature values.
+49. Harden rendered PDF page OCR failures. Done for page-specific diagnostics:
+    rendered PDF pages are OCR'd deterministically so temporary cleanup waits
+    for each page attempt, and a failed page is wrapped with the document name,
+    rendered page number, rendered file name, requested page range, provider
+    name, and redacted provider error before the document is marked failed.
+    Focused API tests cover failed rendered-page OCR diagnostics, cleanup, and
+    secret redaction.
+50. Complete final OCR deployment validation tooling. Done for matrix smoke
+    checks:
+    `npm run smoke:ocr` can now run a JSON-defined matrix of Azure, Google
+    Document AI, Google Vision, AWS Textract, and HTTP OCR smoke checks, write
+    individual and aggregate sanitized summary artifacts, continue across
+    provider failures when requested, and capture redacted provider-specific
+    failure diagnostics without printing extracted attendance values. Focused
+    smoke-runner tests cover matrix config parsing, aggregate summaries,
+    continued failure capture, and secret redaction.
 
 ## API Routes Implemented
 
@@ -505,6 +558,7 @@ DELETE /documents/:documentId
 GET   /uploads/:fileName
 
 GET   /events/:eventId/records
+GET   /events/:eventId/records/analytics
 GET   /events/:eventId/records/export
 GET   /events/:eventId/records/export.xlsx
 POST  /events/:eventId/records
@@ -577,6 +631,7 @@ npm run dev
 npm run lint
 npm run build
 npm run build:api
+npm run test:shared
 npm run test:api
 npm run test:ocr
 npm run smoke:ocr
@@ -938,6 +993,14 @@ Optional smoke variables include
 `OCR_SMOKE_SUMMARY_FILE` can also write the sanitized summary to a JSON file for
 repeatable provider comparisons.
 
+For final deployment validation, set `OCR_SMOKE_RUNS_JSON` to a JSON array of
+provider runs and use the same `npm run smoke:ocr` command. Each run can define
+`name`, `provider`, `file`, `fileType`, `layout`, `rowCount`, `pageStart`,
+`pageCount`, `totalPages`, `requireRows`, `fields`, and `summaryFile`.
+`OCR_SMOKE_MATRIX_SUMMARY_FILE` writes a sanitized aggregate artifact, and
+`OCR_SMOKE_CONTINUE_ON_ERROR="true"` attempts every provider while recording
+redacted failure diagnostics for any provider that fails.
+
 Extraction also accepts a layout hint: `table` for attendance rows or `form`
 for form-entry sheets. The mock fallback can generate form-style extracted
 records for workflow testing, and the Windows OCR provider now has a first real
@@ -961,16 +1024,17 @@ For form-layout extraction, Windows OCR matches labels using field keys, labels,
 saved aliases, and common field terms, then captures same-line or nearby values.
 Repeated label groups can become separate extracted form entries, so simple
 membership or sign-in forms can flow into the same review table as attendance
-rows. The form parser now also keeps wrapped multiline values in reading order
-and can read left-side checkbox-style marks for signature fields. For saved
-select fields, checkbox option groups can map the checked option into the
-review value without including the unchecked options. Signature fields can also
-use simple handwritten-looking stroke marks from the signature region as signed
-values while preserving the mark's bounding box. When multiple options are
-checked for a saved select field, CrowdLog preserves the checked labels as a
-comma-separated value and flags the cell for review because the template field
-is still single-select. For saved multi-select fields, the same checked option
-group flow is valid: selected labels are preserved in reading order without the
+rows. The form parser now also keeps wrapped multiline values in reading order,
+preserves compact inline label/value tokens such as `Name:Ada`, and can read
+left-side checkbox-style marks for signature fields. For saved select fields,
+checkbox option groups can map the checked option into the review value without
+including the unchecked options. Signature fields can also use simple
+handwritten-looking stroke marks from the signature region as signed values
+while preserving the mark's bounding box. When multiple options are checked for
+a saved select field, CrowdLog preserves the checked labels as a comma-separated
+value and flags the cell for review because the template field is still
+single-select. For saved multi-select fields, the same checked option group flow
+is valid: selected labels are preserved in reading order without the
 single-select validation issue. Signature fields also detect adjacent split
 stroke clusters in the signature region while ignoring blank underline-only
 signature lines.
@@ -987,37 +1051,28 @@ select checkbox-group parser, first handwritten signature-region pass, first
 production PDF hardening pass, richer multi-select checkbox preservation, true
 multi-select template fields, split-stroke signature-region pass,
 provider-native PDF auto routing, direct-PDF failure diagnostics, the first
-OCR deployment readiness check, saved event/template editing, and sanitized
-smoke-check summary artifacts are complete for the current app shape. A
-repeatable Azure/Google Document AI/Google
+OCR deployment readiness check, saved event/template editing, sanitized
+smoke-check summary artifacts, rendered-page PDF failure diagnostics, matrix
+OCR smoke validation, and the first frontend component split are complete for
+the current app shape. A repeatable Azure/Google Document AI/Google
 Vision/AWS Textract/HTTP OCR smoke-check runner, a Google Document AI adapter,
 a Google Vision adapter, and an AWS Textract adapter are also in place for
 credentialed deployment environments. Google Vision is image-oriented for
 uploaded images and rendered PDF pages, while AWS Textract can handle table and
 key-value form blocks through `AnalyzeDocument`.
 
-1. Run `npm run smoke:ocr` against real Azure/Google Document AI/Google
-   Vision/AWS Textract/HTTP credentials and sample documents when a deployment
-   environment is available, then capture any provider-specific mapping or
-   fallback issues that appear.
-2. Add more vendor-specific OCR adapters only if a deployment needs another
-   vendor.
-3. Continue broader form-layout OCR only when real sheets expose new layout
-   patterns.
+No remaining build phase is planned for this learning roadmap. Credentialed
+provider smoke checks are now an operational deployment activity: set
+`OCR_SMOKE_RUNS_JSON` with the providers and sample documents available in the
+target environment, then run `npm run smoke:ocr` to capture sanitized provider
+mapping and fallback results.
 
 ## Still Left To Build
 
-- Additional vendor-specific cloud OCR adapters beyond Azure Document
+- Nothing planned for the current app shape. Additional vendor-specific OCR
+  adapters should be driven by future deployment evidence beyond Azure Document
   Intelligence, Google Document AI, Google Vision, AWS Textract, and the
   generic HTTP OCR bridge.
-- Broader form-layout OCR parsing beyond wrapped values, signature checkboxes,
-  true multi-select checkbox groups, split signature stroke clusters, and simple
-  signature-region marks.
-- Further production PDF OCR hardening, especially repeated real-provider smoke
-  checks and vendor-specific fallback behavior.
-- Advanced analytics and reporting dashboards.
-- Broader automated tests.
-- Breaking the large frontend component into smaller components.
 
 ## New Chat Handoff
 
@@ -1066,6 +1121,9 @@ Already done:
 - Failed extraction attempts mark the uploaded document as failed and persist
   sanitized diagnostic raw OCR metadata; auto-mode provider fallback failures
   are preserved when extraction recovers through another provider or mock rows
+- Rendered PDF page OCR failures include the failed page number, rendered page
+  file name, requested page range, provider name, and redacted provider error in
+  the persisted failed-document diagnostic metadata
 - `GET /health/ocr` reports OCR provider mode, direct-PDF support,
   Azure/Google Document AI/Google Vision/AWS Textract/HTTP configuration
   readiness, `pdftoppm` availability, and the effective PDF extraction path
@@ -1119,6 +1177,10 @@ Already done:
 - `OCR_SMOKE_SUMMARY_FILE` can save that sanitized smoke-check summary as a JSON
   artifact for comparing repeated provider runs without extracted attendance
   values
+- `OCR_SMOKE_RUNS_JSON` can run a final provider smoke matrix through the same
+  command, with optional per-run summary files, an aggregate
+  `OCR_SMOKE_MATRIX_SUMMARY_FILE`, and redacted failure diagnostics when
+  `OCR_SMOKE_CONTINUE_ON_ERROR="true"`
 - Uploaded documents can be replaced or deleted, with extracted rows and local files cleaned up
 - OCR can suggest missing uploaded sheet columns, such as `taxa`
 - Windows OCR can map columns using labels, keys, aliases, and common header variants
@@ -1161,16 +1223,23 @@ Already done:
   suggested OCR fields
 - Reviewers can access the event workspace and review extracted rows
 - Approved/rejected rows track the reviewer and reviewed time for reporting
-- Focused API tests cover auth sessions, protected guards, owner-only actions, event/template edits, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, SMTP delivery behavior, reviewer record access, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, OCR deployment readiness, OCR smoke-runner behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, Google Document AI provider behavior, Google Vision provider behavior, AWS Textract provider behavior, and OCR normalization
+- `GET /events/:eventId/records/analytics` returns server-side event analytics
+  for status totals, confidence, issue cells, document progress, reviewer
+  throughput, field quality, and activity trends
+- Focused API tests cover auth sessions, protected guards, owner-only actions, event/template edits, reviewer invitation queuing, HTTP delivery behavior, Resend delivery behavior, Postmark delivery behavior, SendGrid delivery behavior, SMTP delivery behavior, reviewer record access, record analytics, document lifecycle cleanup, PDF page-range extraction options, PDF render-mode fallback behavior, direct-PDF failure diagnostics, OCR deployment readiness, OCR smoke-runner behavior, form-style extraction options, Windows form-layout OCR parsing, HTTP OCR provider behavior, Azure Document Intelligence provider behavior, Google Document AI provider behavior, Google Vision provider behavior, AWS Textract provider behavior, and OCR normalization
+- Focused shared-package tests cover template helper behavior for field keys, duplicate keys, comma lists, and draft client ids
+- Run the focused shared suite with `npm run test:shared`
 - Run the focused API suite with `npm run test:api`
-- Review workspace has client-side search, status filters, summary counts, reporting panels, visible-row CSV export, and server-side full-event CSV/Excel export
+- Review workspace has client-side search, status filters, summary counts,
+  advanced analytics dashboards, visible-row CSV export, and server-side
+  full-event CSV/Excel export
 - Portfolio case study and screenshot guide live in `docs/`
 - `npm run seed:portfolio` creates an anonymized demo event for screenshot capture
 - `npm run screenshots:portfolio` signs in to the seeded demo and captures the documented screenshot set with Chrome or Edge
 - The five captured portfolio screenshots are stored in `docs/screenshots`
 
 Current next phase:
-The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, Google Document AI adapter, Google Vision adapter, AWS Textract adapter, wrapped-value/signature-checkbox form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, first OCR deployment readiness check, repeatable Azure/Google Document AI/Google Vision/AWS Textract/HTTP OCR smoke-check runner, sanitized smoke-check summary artifacts, reviewable multi-select checkbox preservation, true multi-select template fields, SMTP invitation delivery, and saved event/template editing are complete for now. Continue with OCR/document depth: run `npm run smoke:ocr` against real Azure/Google Document AI/Google Vision/AWS Textract/HTTP credentials and sample documents when available, add additional vendor-specific adapters only if a deployment needs another vendor, or broaden form-layout parsing when real sheets expose new patterns.
+No build phase remains for the current learning roadmap. The invitation provider pass, standalone team-management route, PDF render hook, first Windows form parser, generic HTTP OCR bridge, Azure Document Intelligence adapter, Google Document AI adapter, Google Vision adapter, AWS Textract adapter, wrapped-value/signature-checkbox form OCR pass, compact inline label/value form OCR pass, select checkbox-group parser, simple signature-region mark handling, split-stroke signature-region parsing, first production PDF hardening pass, provider-native PDF auto routing, direct-PDF failure diagnostics, rendered-page PDF failure diagnostics, first OCR deployment readiness check, repeatable Azure/Google Document AI/Google Vision/AWS Textract/HTTP OCR smoke-check runner, matrix smoke validation, sanitized smoke-check summary artifacts, reviewable multi-select checkbox preservation, true multi-select template fields, SMTP invitation delivery, advanced analytics dashboards, saved event/template editing, the first frontend component split, and shared template-helper tests are complete for now. Credentialed provider smoke checks are now an operational deployment activity using `OCR_SMOKE_RUNS_JSON` plus `npm run smoke:ocr` when real cloud credentials and sample documents are available.
 
-Please inspect the repo first, avoid reading .env secrets, then continue from the OCR/document depth phase.
+Please inspect the repo first and avoid reading .env secrets. There are no remaining learning phases; future work should be driven by real deployment feedback, production bug reports, or new product requirements.
 ```

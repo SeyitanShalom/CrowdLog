@@ -2,6 +2,7 @@ import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
   AttendanceDocumentStatus,
   AttendanceRecordStatus,
+  EventMemberRole as PrismaEventMemberRole,
   Prisma,
   type AttendanceDocument,
   type TemplateField,
@@ -55,6 +56,94 @@ type ExportRecordWithDocument = Prisma.AttendanceRecordGetPayload<{
     document: true;
   };
 }>;
+type AnalyticsRecord = Prisma.AttendanceRecordGetPayload<{
+  include: {
+    document: true;
+    reviewedBy: {
+      select: {
+        id: true;
+        email: true;
+        name: true;
+      };
+    };
+    values: {
+      include: {
+        field: true;
+      };
+    };
+  };
+}>;
+type ApiFieldType =
+  | "text"
+  | "email"
+  | "phone"
+  | "number"
+  | "signature"
+  | "date"
+  | "select"
+  | "multi_select";
+type ApiEventMemberRole = "owner" | "reviewer";
+type AnalyticsStatusCounts = {
+  total: number;
+  reviewed: number;
+  approved: number;
+  rejected: number;
+  needsReview: number;
+  draft: number;
+};
+type EventRecordAnalyticsResponse = {
+  eventId: string;
+  generatedAt: string;
+  summary: AnalyticsStatusCounts & {
+    reviewRate: number;
+    approvalRate: number;
+    rejectionRate: number;
+    averageConfidence: number | null;
+    lowConfidenceRecords: number;
+    validationIssueCells: number;
+  };
+  documents: Array<
+    AnalyticsStatusCounts & {
+      id: string;
+      name: string;
+      status: string;
+      reviewRate: number;
+      averageConfidence: number | null;
+      validationIssueCells: number;
+      lastActivityAt: string | null;
+    }
+  >;
+  reviewers: Array<{
+    userId: string;
+    email: string;
+    name: string | null;
+    role: ApiEventMemberRole;
+    reviewed: number;
+    approved: number;
+    rejected: number;
+    shareOfReviewed: number;
+    lastReviewedAt: string | null;
+  }>;
+  fields: Array<{
+    fieldId: string;
+    key: string;
+    label: string;
+    type: ApiFieldType;
+    required: boolean;
+    populatedRecords: number;
+    blankRecords: number;
+    issueCells: number;
+    lowConfidenceCells: number;
+    averageConfidence: number | null;
+  }>;
+  activity: Array<{
+    date: string;
+    createdRecords: number;
+    reviewedRecords: number;
+    approvedRecords: number;
+    rejectedRecords: number;
+  }>;
+};
 
 const EXTRACTION_TRANSACTION_OPTIONS = {
   maxWait: 10000,
@@ -86,6 +175,76 @@ export class RecordsService {
     });
 
     return records.map(toAttendanceRecordResponse);
+  }
+
+  async getRecordAnalytics(
+    eventId: string,
+    userId: string,
+  ): Promise<EventRecordAnalyticsResponse> {
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: {
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+              },
+            },
+          },
+          orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+        },
+        templates: {
+          orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+          include: {
+            fields: {
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+        },
+        documents: {
+          orderBy: [{ updatedAt: "desc" }, { fileName: "asc" }],
+        },
+        records: {
+          orderBy: [{ createdAt: "asc" }, { rowNumber: "asc" }],
+          include: {
+            document: true,
+            reviewedBy: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+              },
+            },
+            values: {
+              include: {
+                field: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!event) {
+      throw new NotFoundException("Event not found.");
+    }
+
+    this.ensureCanAccessEvent(event, userId);
+
+    const fields = event.templates[0]?.fields ?? [];
+
+    return {
+      eventId,
+      generatedAt: new Date().toISOString(),
+      summary: this.eventAnalyticsSummary(event.records),
+      documents: this.documentAnalytics(event.documents, event.records),
+      reviewers: this.reviewerAnalytics(event.members, event.records),
+      fields: this.fieldAnalytics(fields, event.records),
+      activity: this.activityAnalytics(event.records),
+    };
   }
 
   async exportRecordsCsv(eventId: string, userId: string) {
@@ -466,6 +625,299 @@ export class RecordsService {
       template,
       records,
     };
+  }
+
+  private eventAnalyticsSummary(records: AnalyticsRecord[]) {
+    const counts = this.recordStatusCounts(records);
+    const confidenceValues = records
+      .map((record) => record.confidenceScore)
+      .filter((value): value is number => typeof value === "number");
+    const validationIssueCells = records.reduce(
+      (total, record) =>
+        total +
+        record.values.filter(
+          (value) => this.jsonStringArray(value.validationIssues).length > 0,
+        ).length,
+      0,
+    );
+
+    return {
+      ...counts,
+      reviewRate: this.rate(counts.reviewed, counts.total),
+      approvalRate: this.rate(counts.approved, counts.total),
+      rejectionRate: this.rate(counts.rejected, counts.total),
+      averageConfidence: this.average(confidenceValues),
+      lowConfidenceRecords: records.filter(
+        (record) =>
+          typeof record.confidenceScore === "number" &&
+          record.confidenceScore < 0.75,
+      ).length,
+      validationIssueCells,
+    };
+  }
+
+  private documentAnalytics(
+    documents: Array<{
+      id: string;
+      fileName: string;
+      status: AttendanceDocumentStatus;
+      createdAt: Date;
+      updatedAt: Date;
+    }>,
+    records: AnalyticsRecord[],
+  ): EventRecordAnalyticsResponse["documents"] {
+    const reports = new Map<
+      string,
+      EventRecordAnalyticsResponse["documents"][number]
+    >();
+
+    for (const document of documents) {
+      reports.set(document.id, {
+        id: document.id,
+        name: document.fileName,
+        status: fromPrismaDocumentStatus(document.status),
+        ...this.emptyStatusCounts(),
+        reviewRate: 0,
+        averageConfidence: null,
+        validationIssueCells: 0,
+        lastActivityAt: this.isoDate(document.updatedAt ?? document.createdAt),
+      });
+    }
+
+    for (const record of records) {
+      const documentId = record.documentId ?? "manual";
+      const report =
+        reports.get(documentId) ??
+        {
+          id: documentId,
+          name: record.document?.fileName ?? "Manual rows",
+          status: record.document
+            ? fromPrismaDocumentStatus(record.document.status)
+            : "manual",
+          ...this.emptyStatusCounts(),
+          reviewRate: 0,
+          averageConfidence: null,
+          validationIssueCells: 0,
+          lastActivityAt: null,
+        };
+
+      this.incrementStatusCounts(report, record.status);
+      report.averageConfidence = this.runningAverage(
+        report.averageConfidence,
+        report.total - 1,
+        record.confidenceScore,
+      );
+      report.validationIssueCells += record.values.filter(
+        (value) => this.jsonStringArray(value.validationIssues).length > 0,
+      ).length;
+      report.lastActivityAt = this.latestIsoDate(
+        report.lastActivityAt,
+        record.updatedAt,
+      );
+      report.reviewRate = this.rate(report.reviewed, report.total);
+      reports.set(documentId, report);
+    }
+
+    return Array.from(reports.values()).sort((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+  }
+
+  private reviewerAnalytics(
+    members: Array<{
+      userId: string;
+      role: PrismaEventMemberRole;
+      user: { email: string; name: string | null };
+    }>,
+    records: AnalyticsRecord[],
+  ): EventRecordAnalyticsResponse["reviewers"] {
+    const reviewedRecords = records.filter(
+      (record) =>
+        record.status === AttendanceRecordStatus.APPROVED ||
+        record.status === AttendanceRecordStatus.REJECTED,
+    );
+    const reports = new Map<
+      string,
+      EventRecordAnalyticsResponse["reviewers"][number]
+    >();
+    const unattributed: EventRecordAnalyticsResponse["reviewers"][number] = {
+      userId: "unattributed",
+      email: "Rows reviewed before reviewer tracking",
+      name: "Unattributed",
+      role: "reviewer",
+      reviewed: 0,
+      approved: 0,
+      rejected: 0,
+      shareOfReviewed: 0,
+      lastReviewedAt: null,
+    };
+
+    for (const member of members) {
+      reports.set(member.userId, {
+        userId: member.userId,
+        email: member.user.email,
+        name: member.user.name,
+        role: this.fromPrismaEventMemberRole(member.role),
+        reviewed: 0,
+        approved: 0,
+        rejected: 0,
+        shareOfReviewed: 0,
+        lastReviewedAt: null,
+      });
+    }
+
+    for (const record of reviewedRecords) {
+      const report = record.reviewedByUserId
+        ? reports.get(record.reviewedByUserId)
+        : unattributed;
+
+      if (!report) {
+        continue;
+      }
+
+      report.reviewed += 1;
+      report.approved += record.status === AttendanceRecordStatus.APPROVED ? 1 : 0;
+      report.rejected += record.status === AttendanceRecordStatus.REJECTED ? 1 : 0;
+      report.lastReviewedAt = this.latestIsoDate(
+        report.lastReviewedAt,
+        record.reviewedAt ?? record.updatedAt,
+      );
+    }
+
+    const result =
+      unattributed.reviewed > 0
+        ? [...reports.values(), unattributed]
+        : Array.from(reports.values());
+
+    return result.map((report) => ({
+      ...report,
+      shareOfReviewed: this.rate(report.reviewed, reviewedRecords.length),
+    }));
+  }
+
+  private fieldAnalytics(
+    fields: TemplateField[],
+    records: AnalyticsRecord[],
+  ): EventRecordAnalyticsResponse["fields"] {
+    return fields.map((field) => {
+      const cells = records.flatMap((record) =>
+        record.values.filter((value) => value.fieldId === field.id),
+      );
+      const confidenceValues = cells
+        .map((cell) => cell.confidence)
+        .filter((value): value is number => typeof value === "number");
+      const populatedRecords = records.filter((record) =>
+        this.hasRecordValue(this.jsonRecord(record.dataJson)[field.key]),
+      ).length;
+
+      return {
+        fieldId: field.id,
+        key: field.key,
+        label: field.label,
+        type: this.fromPrismaFieldType(field.type),
+        required: field.required,
+        populatedRecords,
+        blankRecords: Math.max(0, records.length - populatedRecords),
+        issueCells: cells.filter(
+          (cell) => this.jsonStringArray(cell.validationIssues).length > 0,
+        ).length,
+        lowConfidenceCells: cells.filter(
+          (cell) => typeof cell.confidence === "number" && cell.confidence < 0.75,
+        ).length,
+        averageConfidence: this.average(confidenceValues),
+      };
+    });
+  }
+
+  private activityAnalytics(
+    records: AnalyticsRecord[],
+  ): EventRecordAnalyticsResponse["activity"] {
+    const buckets = new Map<
+      string,
+      EventRecordAnalyticsResponse["activity"][number]
+    >();
+    const bucketFor = (date: Date) => {
+      const key = date.toISOString().slice(0, 10);
+      const existing = buckets.get(key);
+
+      if (existing) {
+        return existing;
+      }
+
+      const bucket = {
+        date: key,
+        createdRecords: 0,
+        reviewedRecords: 0,
+        approvedRecords: 0,
+        rejectedRecords: 0,
+      };
+
+      buckets.set(key, bucket);
+      return bucket;
+    };
+
+    for (const record of records) {
+      bucketFor(record.createdAt).createdRecords += 1;
+
+      if (
+        record.status !== AttendanceRecordStatus.APPROVED &&
+        record.status !== AttendanceRecordStatus.REJECTED
+      ) {
+        continue;
+      }
+
+      const reviewedBucket = bucketFor(record.reviewedAt ?? record.updatedAt);
+
+      reviewedBucket.reviewedRecords += 1;
+      reviewedBucket.approvedRecords +=
+        record.status === AttendanceRecordStatus.APPROVED ? 1 : 0;
+      reviewedBucket.rejectedRecords +=
+        record.status === AttendanceRecordStatus.REJECTED ? 1 : 0;
+    }
+
+    return Array.from(buckets.values()).sort((left, right) =>
+      left.date.localeCompare(right.date),
+    );
+  }
+
+  private recordStatusCounts(records: AnalyticsRecord[]) {
+    const counts = this.emptyStatusCounts();
+
+    for (const record of records) {
+      this.incrementStatusCounts(counts, record.status);
+    }
+
+    return counts;
+  }
+
+  private emptyStatusCounts() {
+    return {
+      total: 0,
+      reviewed: 0,
+      approved: 0,
+      rejected: 0,
+      needsReview: 0,
+      draft: 0,
+    };
+  }
+
+  private incrementStatusCounts(
+    counts: ReturnType<RecordsService["emptyStatusCounts"]>,
+    status: AttendanceRecordStatus,
+  ) {
+    counts.total += 1;
+
+    if (status === AttendanceRecordStatus.APPROVED) {
+      counts.reviewed += 1;
+      counts.approved += 1;
+    } else if (status === AttendanceRecordStatus.REJECTED) {
+      counts.reviewed += 1;
+      counts.rejected += 1;
+    } else if (status === AttendanceRecordStatus.NEEDS_REVIEW) {
+      counts.needsReview += 1;
+    } else {
+      counts.draft += 1;
+    }
   }
 
   private ensureCanAccessEvent(
@@ -1029,28 +1481,40 @@ export class RecordsService {
     options: OcrExtractionOptions,
     pages: RenderedPdfPage[],
   ): Promise<OcrExtractionResult> {
-    const pageResults = await Promise.all(
-      pages.map((page) =>
-        this.ocrProvider.extract({
-          document: {
-            id: document.id,
-            eventId: document.eventId,
-            fileName: page.fileName,
-            fileType: page.fileType,
-            fileUrl: `rendered-pdf://${document.id}/${page.pageNumber}`,
-            filePath: page.filePath,
-          },
-          template,
-          options: {
-            rowCount: options.rowCount,
-            layout: options.layout,
-            pageStart: page.pageNumber,
-            pageCount: 1,
-            totalPages: options.totalPages,
-          },
-        }),
-      ),
-    );
+    const pageResults: OcrExtractionResult[] = [];
+
+    for (const page of pages) {
+      try {
+        pageResults.push(
+          await this.ocrProvider.extract({
+            document: {
+              id: document.id,
+              eventId: document.eventId,
+              fileName: page.fileName,
+              fileType: page.fileType,
+              fileUrl: `rendered-pdf://${document.id}/${page.pageNumber}`,
+              filePath: page.filePath,
+            },
+            template,
+            options: {
+              rowCount: options.rowCount,
+              layout: options.layout,
+              pageStart: page.pageNumber,
+              pageCount: 1,
+              totalPages: options.totalPages,
+            },
+          }),
+        );
+      } catch (error) {
+        throw this.renderedPdfPageExtractionError(
+          document,
+          options,
+          page,
+          error,
+        );
+      }
+    }
+
     const rows = pageResults.flatMap((result, resultIndex) =>
       result.rows.map((row) => ({
         ...row,
@@ -1089,6 +1553,30 @@ export class RecordsService {
         pageResults.flatMap((result) => result.suggestedFields),
       ),
     };
+  }
+
+  private renderedPdfPageExtractionError(
+    document: {
+      fileName: string;
+    },
+    options: OcrExtractionOptions,
+    page: RenderedPdfPage,
+    error: unknown,
+  ) {
+    const pageStart = options.pageStart ?? 1;
+    const pageCount = options.pageCount ?? 1;
+    const pageEnd = pageStart + pageCount - 1;
+    const providerName = this.ocrProvider.name ?? "unknown";
+    const message = [
+      `Rendered PDF page OCR failed for "${document.fileName}"`,
+      `page ${page.pageNumber}`,
+      `rendered file "${page.fileName}"`,
+      `provider "${providerName}"`,
+      `requested pages ${pageStart}-${pageEnd}`,
+      `provider error: ${this.sanitizedErrorMessage(error)}`,
+    ].join("; ");
+
+    return new Error(message, { cause: error });
   }
 
   private dedupeSuggestedFields(
@@ -1154,6 +1642,90 @@ export class RecordsService {
     }
 
     return result;
+  }
+
+  private jsonStringArray(value: Prisma.JsonValue) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.filter((item): item is string => typeof item === "string");
+  }
+
+  private hasRecordValue(value: RecordCellValue | undefined) {
+    return value !== undefined && value !== null && value !== "" && value !== false;
+  }
+
+  private average(values: number[]) {
+    if (values.length === 0) {
+      return null;
+    }
+
+    return Number(
+      (values.reduce((total, value) => total + value, 0) / values.length).toFixed(
+        2,
+      ),
+    );
+  }
+
+  private runningAverage(
+    currentAverage: number | null,
+    previousCount: number,
+    nextValue: number | null,
+  ) {
+    if (typeof nextValue !== "number") {
+      return currentAverage;
+    }
+
+    if (currentAverage === null || previousCount === 0) {
+      return Number(nextValue.toFixed(2));
+    }
+
+    return Number(
+      ((currentAverage * previousCount + nextValue) / (previousCount + 1)).toFixed(
+        2,
+      ),
+    );
+  }
+
+  private rate(part: number, total: number) {
+    if (total === 0) {
+      return 0;
+    }
+
+    return Math.round((part / total) * 100);
+  }
+
+  private latestIsoDate(currentValue: string | null, nextValue: Date | null) {
+    if (!nextValue) {
+      return currentValue;
+    }
+
+    if (!currentValue) {
+      return this.isoDate(nextValue);
+    }
+
+    return nextValue.getTime() > new Date(currentValue).getTime()
+      ? this.isoDate(nextValue)
+      : currentValue;
+  }
+
+  private isoDate(value: Date | null | undefined) {
+    return value ? value.toISOString() : null;
+  }
+
+  private fromPrismaEventMemberRole(
+    role: PrismaEventMemberRole,
+  ): ApiEventMemberRole {
+    return role === PrismaEventMemberRole.OWNER ? "owner" : "reviewer";
+  }
+
+  private fromPrismaFieldType(type: TemplateField["type"]): ApiFieldType {
+    if (type === "MULTI_SELECT") {
+      return "multi_select";
+    }
+
+    return type.toLowerCase() as ApiFieldType;
   }
 
   private valueToString(value: RecordCellValue | undefined) {

@@ -35,7 +35,12 @@ function templateField() {
   };
 }
 
-function pdfExtractionFixture({ ocrProvider, renderer }) {
+function pdfExtractionFixture({
+  ocrProvider,
+  renderer,
+  fileName = "attendance.pdf",
+}) {
+  const fileUrl = `/uploads/${fileName}`;
   const tx = {
     attendanceRecord: {
       deleteMany: mockFn(async () => ({ count: 0 })),
@@ -46,9 +51,9 @@ function pdfExtractionFixture({ ocrProvider, renderer }) {
       update: mockFn(async (input) => ({
         id: "document_pdf",
         eventId: "event_1",
-        fileName: "attendance.pdf",
+        fileName,
         fileType: "application/pdf",
-        fileUrl: "/uploads/attendance.pdf",
+        fileUrl,
         status: AttendanceDocumentStatus.EXTRACTED,
         rawOcrJson: input.data.rawOcrJson,
         createdAt: now,
@@ -65,9 +70,9 @@ function pdfExtractionFixture({ ocrProvider, renderer }) {
       update: mockFn(async (input) => ({
         id: "document_pdf",
         eventId: "event_1",
-        fileName: "attendance.pdf",
+        fileName,
         fileType: "application/pdf",
-        fileUrl: "/uploads/attendance.pdf",
+        fileUrl,
         status: input.data.status,
         rawOcrJson: input.data.rawOcrJson,
         createdAt: now,
@@ -77,9 +82,9 @@ function pdfExtractionFixture({ ocrProvider, renderer }) {
       findUnique: mockFn(async () => ({
         id: "document_pdf",
         eventId: "event_1",
-        fileName: "attendance.pdf",
+        fileName,
         fileType: "application/pdf",
-        fileUrl: "/uploads/attendance.pdf",
+        fileUrl,
         status: AttendanceDocumentStatus.UPLOADED,
         rawOcrJson: null,
         createdAt: now,
@@ -436,6 +441,136 @@ test("PDF document extraction renders pages before OCR when a renderer is availa
       { rowNumber: 2, dataJson: { name: "Page 3" } },
     ],
   );
+});
+
+test("PDF document extraction records rendered page OCR failures with page diagnostics", async () => {
+  const previousRenderMode = process.env.OCR_PDF_RENDER_MODE;
+  const uploadsDir = join(process.cwd(), "uploads");
+  const fileName = "test-rendered-page-failure.pdf";
+  const filePath = join(uploadsDir, fileName);
+
+  await mkdir(uploadsDir, { recursive: true });
+  await writeFile(
+    filePath,
+    [
+      "%PDF-1.4",
+      "1 0 obj << /Type /Page >> endobj",
+      "2 0 obj << /Type /Page >> endobj",
+      "3 0 obj << /Type /Pages /Kids [1 0 R 2 0 R] >> endobj",
+    ].join("\n"),
+  );
+
+  const ocrProvider = {
+    name: "page-ocr",
+    extract: mockFn(async (input) => {
+      assert.equal(input.document.fileType, "image/png");
+
+      if (input.options.pageStart === 2) {
+        throw new Error(
+          "Rendered page failed authorization: Bearer page-token api_key=page-secret",
+        );
+      }
+
+      return {
+        providerName: "page-ocr",
+        rawOcrJson: {
+          provider: "page-ocr",
+          page: input.options.pageStart,
+        },
+        rows: [],
+        suggestedFields: [],
+      };
+    }),
+  };
+  const renderer = {
+    isAvailable: mockFn(async () => ({ available: true })),
+    renderPages: mockFn(async (input) => {
+      assert.equal(input.pageStart, 1);
+      assert.equal(input.pageCount, 2);
+
+      return {
+        rendered: true,
+        pages: [
+          {
+            pageNumber: 1,
+            fileName: "attendance-page-1.png",
+            filePath: "C:/tmp/page-1.png",
+            fileType: "image/png",
+            cleanupDirectory: "C:/tmp/rendered",
+          },
+          {
+            pageNumber: 2,
+            fileName: "attendance-page-2.png",
+            filePath: "C:/tmp/page-2.png",
+            fileType: "image/png",
+            cleanupDirectory: "C:/tmp/rendered",
+          },
+        ],
+      };
+    }),
+    cleanupRenderedPages: mockFn(async () => null),
+  };
+  const { service, prisma, tx } = pdfExtractionFixture({
+    ocrProvider,
+    renderer,
+    fileName,
+  });
+
+  process.env.OCR_PDF_RENDER_MODE = "render-pages";
+
+  try {
+    await assert.rejects(
+      () =>
+        service.extractDocument(
+          "document_pdf",
+          { rowCount: 5, pageStart: 1, pageCount: 2 },
+          "user_owner",
+        ),
+      (error) => {
+        assert.match(error.message, /Rendered PDF page OCR failed/);
+        assert.match(error.message, /page 2/);
+        assert.match(error.message, /attendance-page-2\.png/);
+        assert.match(error.message, /requested pages 1-2/);
+        assert.match(error.message, /Bearer \[redacted\]/);
+        assert.match(error.message, /api_key=\[redacted\]/);
+        assert.doesNotMatch(error.message, /page-token|page-secret/);
+
+        return true;
+      },
+    );
+
+    assert.equal(renderer.isAvailable.calls.length, 1);
+    assert.equal(renderer.renderPages.calls.length, 1);
+    assert.equal(renderer.cleanupRenderedPages.calls.length, 1);
+    assert.equal(ocrProvider.extract.calls.length, 2);
+    assert.equal(tx.attendanceDocument.update.calls.length, 0);
+    assert.equal(prisma.attendanceDocument.update.calls.length, 1);
+
+    const failureUpdate = prisma.attendanceDocument.update.calls[0][0];
+    const rawOcrJson = failureUpdate.data.rawOcrJson;
+
+    assert.equal(failureUpdate.data.status, AttendanceDocumentStatus.FAILED);
+    assert.equal(rawOcrJson.provider, "extraction-failure");
+    assert.deepEqual(rawOcrJson.pages, {
+      start: 1,
+      count: 2,
+      total: 2,
+    });
+    assert.match(rawOcrJson.error.message, /Rendered PDF page OCR failed/);
+    assert.match(rawOcrJson.error.message, /page 2/);
+    assert.match(rawOcrJson.error.message, /Bearer \[redacted\]/);
+    assert.match(rawOcrJson.error.message, /api_key=\[redacted\]/);
+    assert.doesNotMatch(rawOcrJson.error.message, /page-token|page-secret/);
+    assert.match(rawOcrJson.error.cause.message, /Bearer \[redacted\]/);
+    assert.match(rawOcrJson.error.cause.message, /api_key=\[redacted\]/);
+    assert.doesNotMatch(
+      rawOcrJson.error.cause.message,
+      /page-token|page-secret/,
+    );
+  } finally {
+    restoreEnvValue("OCR_PDF_RENDER_MODE", previousRenderMode);
+    await unlink(filePath).catch(() => undefined);
+  }
 });
 
 test("PDF document extraction can skip rendering for full-document OCR mode", async () => {

@@ -37,10 +37,23 @@ async function main() {
     return;
   }
 
-  const config = readSmokeConfig();
-  const summary = await runSmokeCheck(config);
+  const configs = readSmokeRunConfigs();
+  const summary =
+    configs.length === 1
+      ? await runSmokeCheck(configs[0])
+      : await runSmokeChecks(configs, createProvider, {
+          continueOnError: process.env.OCR_SMOKE_CONTINUE_ON_ERROR === "true",
+          summaryFilePath: parseOptionalPathEnv(
+            process.env.OCR_SMOKE_MATRIX_SUMMARY_FILE,
+            process.cwd(),
+          ),
+        });
 
   console.log(JSON.stringify(summary, null, 2));
+
+  if (summary.ok === false) {
+    process.exitCode = 1;
+  }
 }
 
 async function runSmokeCheck(config, providerFactory = createProvider) {
@@ -62,6 +75,49 @@ async function runSmokeCheck(config, providerFactory = createProvider) {
   }
 
   return summary;
+}
+
+async function runSmokeChecks(
+  configs,
+  providerFactory = createProvider,
+  options = {},
+) {
+  const runs = [];
+
+  for (const config of configs) {
+    try {
+      const summary = await runSmokeCheck(config, providerFactory);
+
+      runs.push({
+        ok: true,
+        runName: summary.runName,
+        requestedProvider: summary.requestedProvider,
+        summary,
+      });
+    } catch (error) {
+      const failure = summarizeSmokeFailure(config, error);
+
+      runs.push(failure);
+
+      if (!options.continueOnError) {
+        throw error;
+      }
+    }
+  }
+
+  const matrixSummary = {
+    ok: runs.every((run) => run.ok),
+    runCount: runs.length,
+    passed: runs.filter((run) => run.ok).length,
+    failed: runs.filter((run) => !run.ok).length,
+    runs,
+  };
+
+  if (options.summaryFilePath) {
+    writeSmokeSummaryFile(matrixSummary, options.summaryFilePath);
+  }
+
+  return matrixSummary;
 }
 
 function readSmokeConfig(env = process.env, cwd = process.cwd()) {
@@ -94,6 +150,7 @@ function readSmokeConfig(env = process.env, cwd = process.cwd()) {
   }
 
   return {
+    runName: env.OCR_SMOKE_RUN_NAME?.trim() || provider,
     provider,
     filePath,
     fileName: basename(filePath),
@@ -126,6 +183,70 @@ function readSmokeConfig(env = process.env, cwd = process.cwd()) {
     requireRows: env.OCR_SMOKE_REQUIRE_ROWS === "true",
     summaryFilePath: parseOptionalPathEnv(env.OCR_SMOKE_SUMMARY_FILE, cwd),
   };
+}
+
+function readSmokeRunConfigs(env = process.env, cwd = process.cwd()) {
+  const runsJson = env.OCR_SMOKE_RUNS_JSON?.trim();
+
+  if (!runsJson) {
+    return [readSmokeConfig(env, cwd)];
+  }
+
+  let runs;
+
+  try {
+    runs = JSON.parse(runsJson);
+  } catch {
+    throw new Error("OCR_SMOKE_RUNS_JSON must be a JSON array.");
+  }
+
+  if (!Array.isArray(runs) || runs.length === 0) {
+    throw new Error("OCR_SMOKE_RUNS_JSON must contain at least one run.");
+  }
+
+  return runs.map((run, index) =>
+    readSmokeConfig(toSmokeRunEnv(env, run, index), cwd),
+  );
+}
+
+function toSmokeRunEnv(env, run, index) {
+  if (!isPlainObject(run)) {
+    throw new Error(`OCR smoke run at index ${index} must be an object.`);
+  }
+
+  const nextEnv = { ...env };
+
+  setRunEnv(nextEnv, "OCR_SMOKE_RUN_NAME", run.name ?? run.runName);
+  setRunEnv(nextEnv, "OCR_SMOKE_PROVIDER", run.provider);
+  setRunEnv(nextEnv, "OCR_SMOKE_FILE", run.file ?? run.filePath);
+  setRunEnv(nextEnv, "OCR_SMOKE_FILE_TYPE", run.fileType);
+  setRunEnv(nextEnv, "OCR_SMOKE_LAYOUT", run.layout);
+  setRunEnv(nextEnv, "OCR_SMOKE_ROW_COUNT", run.rowCount);
+  setRunEnv(nextEnv, "OCR_SMOKE_PAGE_START", run.pageStart);
+  setRunEnv(nextEnv, "OCR_SMOKE_PAGE_COUNT", run.pageCount);
+  setRunEnv(nextEnv, "OCR_SMOKE_TOTAL_PAGES", run.totalPages);
+  setRunEnv(
+    nextEnv,
+    "OCR_SMOKE_SUMMARY_FILE",
+    run.summaryFile ?? run.summaryFilePath,
+  );
+
+  if (run.requireRows !== undefined) {
+    nextEnv.OCR_SMOKE_REQUIRE_ROWS = run.requireRows ? "true" : "false";
+  }
+
+  if (run.fields !== undefined) {
+    nextEnv.OCR_SMOKE_FIELDS_JSON =
+      typeof run.fields === "string" ? run.fields : JSON.stringify(run.fields);
+  }
+
+  return nextEnv;
+}
+
+function setRunEnv(env, key, value) {
+  if (value !== undefined && value !== null) {
+    env[key] = String(value);
+  }
 }
 
 function validateProviderEnvironment(provider, env = process.env) {
@@ -239,6 +360,7 @@ function summarizeExtraction(result, fields, config = {}) {
 
   return {
     ok: true,
+    runName: config.runName ?? null,
     provider: result.providerName,
     requestedProvider: config.provider ?? null,
     document: {
@@ -274,6 +396,22 @@ function summarizeExtraction(result, fields, config = {}) {
       typeof result.rawOcrJson.provider === "string"
         ? result.rawOcrJson.provider
         : null,
+  };
+}
+
+function summarizeSmokeFailure(config, error) {
+  return {
+    ok: false,
+    runName: config.runName ?? config.provider ?? null,
+    requestedProvider: config.provider ?? null,
+    document: {
+      fileName: config.fileName ?? null,
+      fileType: config.fileType ?? null,
+      layout: config.layout ?? null,
+      pageStart: config.pageStart ?? null,
+      pageCount: config.pageCount ?? null,
+    },
+    error: errorDiagnostic(error),
   };
 }
 
@@ -622,6 +760,53 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function errorDiagnostic(error, depth = 0) {
+  const diagnostic = {
+    name: error instanceof Error ? error.name : typeof error,
+    message: sanitizedErrorMessage(error),
+  };
+  const cause = error instanceof Error ? error.cause : undefined;
+
+  if (cause && depth < 2) {
+    diagnostic.cause = errorDiagnostic(cause, depth + 1);
+  }
+
+  return diagnostic;
+}
+
+function sanitizedErrorMessage(error) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Unknown OCR smoke check error.";
+
+  return redactSensitiveText(message.replace(/\s+/g, " ").trim()).slice(0, 600);
+}
+
+function redactSensitiveText(value) {
+  return value
+    .replace(/(authorization:\s*bearer\s+)[^\s,;]+/gi, "$1[redacted]")
+    .replace(/(bearer\s+)[^\s,;]+/gi, "$1[redacted]")
+    .replace(
+      /(ocp-apim-subscription-key["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /((?:api[_-]?key|subscription[_-]?key|token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /((?:access[_-]?token)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+      "$1[redacted]",
+    )
+    .replace(
+      /((?:aws[_-]?)?(?:access[_-]?key[_-]?id|secret[_-]?access[_-]?key)["']?\s*[:=]\s*["']?)[^"',\s}]+/gi,
+      "$1[redacted]",
+    );
+}
+
 function helpText() {
   return `
 Usage:
@@ -643,6 +828,18 @@ Environment:
   OCR_SMOKE_REQUIRE_ROWS   Optional true/false; fail when no rows are returned.
   OCR_SMOKE_FIELDS_JSON    Optional JSON array of template fields.
   OCR_SMOKE_SUMMARY_FILE   Optional path for a sanitized JSON summary artifact.
+
+Matrix mode:
+  OCR_SMOKE_RUNS_JSON      Optional JSON array of smoke runs. Each run can set
+                           name, provider, file, fileType, layout, rowCount,
+                           pageStart, pageCount, totalPages, requireRows,
+                           fields, and summaryFile.
+  OCR_SMOKE_MATRIX_SUMMARY_FILE
+                           Optional path for the sanitized aggregate summary.
+  OCR_SMOKE_CONTINUE_ON_ERROR
+                           Optional true/false; when true, all matrix runs are
+                           attempted and failures are captured with redacted
+                           error details.
 
 Provider configuration:
   AWS Textract requires AWS_TEXTRACT_REGION plus AWS_TEXTRACT_ACCESS_KEY_ID and
@@ -673,8 +870,11 @@ module.exports = {
   normalizeProviderName,
   parseFields,
   readSmokeConfig,
+  readSmokeRunConfigs,
   runSmokeCheck,
+  runSmokeChecks,
   summarizeExtraction,
+  summarizeSmokeFailure,
   validateProviderEnvironment,
   writeSmokeSummaryFile,
 };

@@ -30,6 +30,15 @@ export class RecordsController {
     return this.recordsService.listRecords(eventId, user.id);
   }
 
+  @Get("events/:eventId/records/analytics")
+  @UseGuards(AuthGuard)
+  recordAnalytics(
+    @Param("eventId") eventId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.recordsService.getRecordAnalytics(eventId, user.id);
+  }
+
   @Get("events/:eventId/records/export")
   @UseGuards(AuthGuard)
   async exportRecords(

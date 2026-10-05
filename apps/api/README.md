@@ -69,6 +69,7 @@ GET  /events/:eventId/documents
 POST /events/:eventId/documents
 GET  /uploads/:fileName
 GET  /events/:eventId/records
+GET  /events/:eventId/records/analytics
 POST /events/:eventId/records
 POST /events/:eventId/mock-extract
 POST /documents/:documentId/extract
@@ -167,7 +168,9 @@ When extraction fails, the uploaded document is marked `failed` and receives
 sanitized diagnostic raw OCR metadata with the document, requested options, page
 range, and error/cause messages. In `auto` mode, failed provider attempts are
 preserved in the configured OCR wrapper when extraction later recovers through
-another provider or mock fallback.
+another provider or mock fallback. Rendered PDF page OCR failures include the
+failed page number, rendered page file name, requested page range, provider
+name, and redacted provider error in those diagnostics.
 
 `GET /health/ocr` is a read-only deployment check for OCR/PDF readiness. It
 reports the selected provider mode, mock fallback setting,
@@ -184,6 +187,14 @@ field coverage, confidence, issue counts, and suggested field metadata without
 printing extracted cell values. Set `OCR_SMOKE_SUMMARY_FILE` to also save that
 sanitized summary as a JSON artifact for comparing repeated provider runs.
 
+For final deployment validation, set `OCR_SMOKE_RUNS_JSON` to a JSON array of
+runs and use the same command. Each run can define `name`, `provider`, `file`,
+`fileType`, `layout`, `rowCount`, `pageStart`, `pageCount`, `totalPages`,
+`requireRows`, `fields`, and `summaryFile`. Set
+`OCR_SMOKE_MATRIX_SUMMARY_FILE` for a sanitized aggregate summary and
+`OCR_SMOKE_CONTINUE_ON_ERROR="true"` to attempt every provider while recording
+redacted failure diagnostics.
+
 Optional smoke-check variables:
 
 ```env
@@ -196,6 +207,9 @@ OCR_SMOKE_TOTAL_PAGES=""
 OCR_SMOKE_REQUIRE_ROWS="true"
 OCR_SMOKE_FIELDS_JSON='[{"label":"Name","key":"name","type":"text","required":true}]'
 OCR_SMOKE_SUMMARY_FILE=".tmp/ocr-smoke/azure-summary.json"
+OCR_SMOKE_RUNS_JSON='[{"name":"Azure table","provider":"azure","file":"./samples/sheet.pdf","summaryFile":".tmp/ocr-smoke/azure.json"},{"name":"Vision image","provider":"google-vision","file":"./samples/sheet.png"}]'
+OCR_SMOKE_MATRIX_SUMMARY_FILE=".tmp/ocr-smoke/matrix-summary.json"
+OCR_SMOKE_CONTINUE_ON_ERROR="true"
 ```
 
 `POST /documents/:documentId/extract` runs extraction for an uploaded document.

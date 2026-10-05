@@ -53,6 +53,7 @@ type HeaderCandidate = {
   text: string;
   x: number;
   words: WindowsOcrWord[];
+  inlineValueText?: string;
 };
 
 type FormLabelMatch = {
@@ -61,6 +62,7 @@ type FormLabelMatch = {
   words: WindowsOcrWord[];
   score: number;
   confidence: number;
+  inlineValueText?: string;
 };
 
 @Injectable()
@@ -229,6 +231,7 @@ export class WindowsOcrProvider implements OcrProvider {
           words: candidate.words,
           score,
           confidence: this.headerMatchConfidence(score),
+          inlineValueText: candidate.inlineValueText,
         });
       }
     }
@@ -292,6 +295,23 @@ export class WindowsOcrProvider implements OcrProvider {
 
           if (!this.isCompactHeaderSpan(span)) {
             break;
+          }
+
+          const cellText = this.toCellValue(span);
+
+          if (!cellText) {
+            continue;
+          }
+
+          const inlineValue = this.toInlineFormLabelValue(cellText);
+
+          if (inlineValue) {
+            candidates.push({
+              text: inlineValue.labelText,
+              x: this.spanCenterX(span),
+              words: span,
+              inlineValueText: inlineValue.valueText,
+            });
           }
 
           const text = this.toFormLabelCandidateText(span);
@@ -385,7 +405,10 @@ export class WindowsOcrProvider implements OcrProvider {
       const valueWords = match
         ? this.formValueWordsForLabel(match, matches, words, labelWords, field)
         : [];
-      const rawText = this.toFormCellValue(field, valueWords);
+      const valueText = this.toFormCellValue(field, valueWords);
+      const rawText = cleanOcrText(
+        [match?.inlineValueText, valueText].filter(Boolean).join(" "),
+      );
       const normalized = normalizeOcrCellValue(field, rawText);
       const confidence = match
         ? this.cellConfidence(
@@ -401,7 +424,9 @@ export class WindowsOcrProvider implements OcrProvider {
         normalizedValue: normalized.normalizedValue,
         confidence,
         issues: normalized.issues,
-        boundingBox: this.toBoundingBox(valueWords),
+        boundingBox: this.toBoundingBox(
+          match?.inlineValueText ? [...match.words, ...valueWords] : valueWords,
+        ),
       };
     });
     const data = Object.fromEntries(
@@ -1418,6 +1443,23 @@ export class WindowsOcrProvider implements OcrProvider {
     return this.toCellValue(words)
       .replace(/\s*[:;]\s*$/g, "")
       .trim();
+  }
+
+  private toInlineFormLabelValue(text: string) {
+    const match = cleanOcrText(text).match(/^(.{2,80}?)\s*[:;=]\s*(.+)$/);
+
+    if (!match) {
+      return null;
+    }
+
+    const labelText = cleanOcrText(match[1]);
+    const valueText = cleanOcrText(match[2]);
+
+    if (!labelText || !valueText) {
+      return null;
+    }
+
+    return { labelText, valueText };
   }
 
   private groupMatchesByY(matches: FormLabelMatch[]) {

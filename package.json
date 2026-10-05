@@ -14,6 +14,7 @@
     "start": "npm run start --workspace @crowdlog/web",
     "start:api": "npm run start --workspace @crowdlog/api",
     "lint": "eslint apps/web/src apps/api/src packages/shared/src",
+    "test:shared": "npm run test:shared --workspace @crowdlog/shared",
     "test:api": "npm run test:api --workspace @crowdlog/api",
     "test:ocr": "npm run test:ocr --workspace @crowdlog/api",
     "db:validate": "npm run db:validate --workspace @crowdlog/api",

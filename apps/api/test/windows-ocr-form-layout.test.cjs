@@ -140,6 +140,65 @@ test("windows OCR parses same-line form label and value pairs", async () => {
   );
 });
 
+test("windows OCR parses compact inline form label-value tokens", async () => {
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 2,
+    }),
+    field({
+      id: "field_phone",
+      label: "Phone",
+      key: "phone",
+      type: "PHONE",
+      sortOrder: 3,
+    }),
+    field({
+      id: "field_signature",
+      label: "Signature",
+      key: "signature",
+      type: "SIGNATURE",
+      required: true,
+      sortOrder: 4,
+    }),
+  ];
+  const provider = providerWithOcr([
+    word("Name:Ada", 32, 40, 72),
+    word("Okafor", 112, 40, 54),
+    word("Email:ada@example.com", 32, 78, 166),
+    word("Phone:O8O", 32, 116, 76),
+    word("12S", 116, 116, 28),
+    word("34S6", 150, 116, 38),
+    word("Signature:Yes", 32, 154, 108),
+  ]);
+
+  const result = await provider.extract(extractionInput({ fields }));
+  const nameValue = result.rows[0].values.find(
+    (value) => value.field.key === "name",
+  );
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0].data, {
+    name: "Ada Okafor",
+    email: "ada@example.com",
+    phone: "0801253456",
+    signature: true,
+  });
+  assert.equal(nameValue.rawValue, "Ada Okafor");
+  assert.ok(nameValue.boundingBox);
+});
+
 test("windows OCR separates repeated form entries", async () => {
   const fields = [
     field({

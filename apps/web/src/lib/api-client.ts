@@ -5,6 +5,7 @@ import type {
   AuthUser,
   CrowdLogEvent,
   EventMemberRole,
+  EventRecordAnalytics,
   MockExtractionResult,
   RecordData,
   RecordStatus,
@@ -159,6 +160,10 @@ export type UpdateAttendanceRecordPayload = {
 
 export async function listRecords(eventId: string) {
   return request<AttendanceRecord[]>(`/events/${eventId}/records`);
+}
+
+export async function getEventRecordAnalytics(eventId: string) {
+  return request<EventRecordAnalytics>(`/events/${eventId}/records/analytics`);
 }
 
 export async function exportEventRecordsCsv(eventId: string) {
