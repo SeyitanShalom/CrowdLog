@@ -1,5 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import type { AuthUser } from "@crowdlog/shared";
-import { EMAIL_INPUT_PATTERN } from "@/lib/email-validation";
+import { AuthModal, type AuthDraft } from "../auth-modal";
 
 export function AuthPanel({
   currentUser,
@@ -11,13 +14,15 @@ export function AuthPanel({
   onSignOut,
 }: {
   currentUser: AuthUser | null;
-  authDraft: { email: string; name: string };
+  authDraft: AuthDraft;
   isLoadingSession: boolean;
   isSigningIn: boolean;
-  onAuthDraftChange: (draft: { email: string; name: string }) => void;
+  onAuthDraftChange: (draft: AuthDraft) => void;
   onSignIn: () => void;
   onSignOut: () => void;
 }) {
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
   if (isLoadingSession) {
     return (
       <div className="rounded-md border border-[#fed7aa] bg-white/60 px-3 py-2 text-sm font-medium text-[#6f6359] shadow-sm">
@@ -36,6 +41,11 @@ export function AuthPanel({
           <span className="block truncate text-xs text-[#5f7370]">
             {currentUser.email}
           </span>
+          {currentUser.phone ? (
+            <span className="block truncate text-xs text-[#5f7370]">
+              {currentUser.phone}
+            </span>
+          ) : null}
         </div>
         <button
           type="button"
@@ -50,44 +60,24 @@ export function AuthPanel({
   }
 
   return (
-    <form
-      className="grid gap-2 rounded-lg border border-[#fed7aa] bg-white/60 p-2 shadow-sm backdrop-blur-xl sm:grid-cols-[180px_160px_auto]"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSignIn();
-      }}
-    >
-      <input
-        type="email"
-        required
-        maxLength={254}
-        pattern={EMAIL_INPUT_PATTERN}
-        title="Enter a valid email address."
-        autoComplete="email"
-        value={authDraft.email}
-        placeholder="Email"
-        onChange={(event) =>
-          onAuthDraftChange({ ...authDraft, email: event.target.value })
-        }
-        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-      />
-      <input
-        maxLength={80}
-        autoComplete="name"
-        value={authDraft.name}
-        placeholder="Name"
-        onChange={(event) =>
-          onAuthDraftChange({ ...authDraft, name: event.target.value })
-        }
-        className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-      />
+    <>
       <button
-        type="submit"
+        type="button"
         disabled={isSigningIn}
+        onClick={() => setIsAuthModalOpen(true)}
         className="action-primary h-9 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isSigningIn ? "Signing in" : "Sign in"}
+        Sign in
       </button>
-    </form>
+      {isAuthModalOpen ? (
+        <AuthModal
+          authDraft={authDraft}
+          isSigningIn={isSigningIn}
+          onAuthDraftChange={onAuthDraftChange}
+          onClose={() => setIsAuthModalOpen(false)}
+          onSubmit={onSignIn}
+        />
+      ) : null}
+    </>
   );
 }

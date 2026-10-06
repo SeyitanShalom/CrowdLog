@@ -9,6 +9,7 @@ const recordInclude = {
       id: true,
       email: true,
       name: true,
+      phone: true,
     },
   },
   values: {

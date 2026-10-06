@@ -22,6 +22,8 @@ import {
   EMAIL_INPUT_PATTERN,
   isValidEmailAddress,
 } from "@/lib/email-validation";
+import { isValidPhoneNumber } from "@/lib/phone-validation";
+import { AuthModal, type AuthDraft } from "./auth-modal";
 import { WebsiteHelpDialog } from "./help-dialog";
 
 const EVENT_ROLE_LABELS: Record<EventMemberRole, string> = {
@@ -41,7 +43,11 @@ export function TeamManagementRoute() {
     ? eventIdParam[0]
     : eventIdParam ?? "";
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [authDraft, setAuthDraft] = useState({ email: "", name: "" });
+  const [authDraft, setAuthDraft] = useState<AuthDraft>({
+    email: "",
+    name: "",
+    phone: "",
+  });
   const [event, setEvent] = useState<CrowdLogEvent | null>(null);
   const [memberDraft, setMemberDraft] = useState({ email: "", name: "" });
   const [isLoadingSession, setIsLoadingSession] = useState(true);
@@ -51,6 +57,7 @@ export function TeamManagementRoute() {
   const [removingMemberIds, setRemovingMemberIds] = useState<string[]>([]);
   const [updatingMemberIds, setUpdatingMemberIds] = useState<string[]>([]);
   const [status, setStatus] = useState<StatusMessage>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const currentRole = eventRoleForUser(event, currentUser);
@@ -108,6 +115,7 @@ export function TeamManagementRoute() {
           ...currentDraft,
           email: session.user?.email ?? currentDraft.email,
           name: session.user?.name ?? currentDraft.name,
+          phone: session.user?.phone ?? currentDraft.phone,
         }));
 
         if (!session.user) {
@@ -143,6 +151,7 @@ export function TeamManagementRoute() {
   async function signIn() {
     const email = authDraft.email.trim();
     const name = authDraft.name.trim();
+    const phone = authDraft.phone.trim();
 
     if (!email) {
       setStatus({ tone: "error", text: "Email is required." });
@@ -154,17 +163,28 @@ export function TeamManagementRoute() {
       return;
     }
 
+    if (phone && !isValidPhoneNumber(phone)) {
+      setStatus({ tone: "error", text: "Enter a valid phone number." });
+      return;
+    }
+
     setIsSigningIn(true);
     setStatus({ tone: "info", text: "Signing in." });
 
     try {
-      const result = await apiSignIn({ email, name: name || undefined });
+      const result = await apiSignIn({
+        email,
+        name: name || undefined,
+        phone: phone || undefined,
+      });
 
       setCurrentUser(result.user);
       setAuthDraft({
         email: result.user.email,
         name: result.user.name ?? name,
+        phone: result.user.phone ?? phone,
       });
+      setIsAuthModalOpen(false);
       await loadEvent();
     } catch (error) {
       setStatus({
@@ -180,6 +200,7 @@ export function TeamManagementRoute() {
     await apiSignOut();
     setCurrentUser(null);
     setEvent(null);
+    setIsAuthModalOpen(false);
     setMemberDraft({ email: "", name: "" });
     setStatus({ tone: "info", text: "Signed out." });
   }
@@ -370,6 +391,16 @@ export function TeamManagementRoute() {
         <WebsiteHelpDialog onClose={() => setIsHelpOpen(false)} />
       ) : null}
 
+      {isAuthModalOpen ? (
+        <AuthModal
+          authDraft={authDraft}
+          isSigningIn={isSigningIn}
+          onAuthDraftChange={setAuthDraft}
+          onClose={() => setIsAuthModalOpen(false)}
+          onSubmit={signIn}
+        />
+      ) : null}
+
       <main className="mx-auto grid w-full max-w-7xl gap-5 px-5 py-5 xl:min-h-0 xl:flex-1 xl:grid-cols-[320px_minmax(0,1fr)] xl:overflow-hidden">
         <aside className="space-y-5 xl:min-h-0 xl:overflow-y-auto xl:pr-1 xl:pb-5">
           <section className="glass-panel-strong motion-rise rounded-md p-4">
@@ -386,6 +417,11 @@ export function TeamManagementRoute() {
                 <p className="mt-1 truncate text-xs text-[#667265]">
                   {currentUser.email}
                 </p>
+                {currentUser.phone ? (
+                  <p className="mt-1 truncate text-xs text-[#667265]">
+                    {currentUser.phone}
+                  </p>
+                ) : null}
                 {currentRole ? (
                   <span className="mt-3 inline-flex rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1 text-xs font-semibold text-[#526052]">
                     {EVENT_ROLE_LABELS[currentRole]}
@@ -393,55 +429,14 @@ export function TeamManagementRoute() {
                 ) : null}
               </div>
             ) : (
-              <form
-                className="mt-3 grid gap-3"
-                onSubmit={(submitEvent) => {
-                  submitEvent.preventDefault();
-                  signIn();
-                }}
+              <button
+                type="button"
+                onClick={() => setIsAuthModalOpen(true)}
+                disabled={isSigningIn}
+                className="action-primary mt-3 h-10 w-full rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
-                  Email
-                  <input
-                    type="email"
-                    required
-                    maxLength={254}
-                    pattern={EMAIL_INPUT_PATTERN}
-                    title="Enter a valid email address."
-                    autoComplete="email"
-                    value={authDraft.email}
-                    onChange={(inputEvent) =>
-                      setAuthDraft({
-                        ...authDraft,
-                        email: inputEvent.target.value,
-                      })
-                    }
-                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-                  />
-                </label>
-                <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
-                  Name
-                  <input
-                    maxLength={80}
-                    autoComplete="name"
-                    value={authDraft.name}
-                    onChange={(inputEvent) =>
-                      setAuthDraft({
-                        ...authDraft,
-                        name: inputEvent.target.value,
-                      })
-                    }
-                    className="h-10 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={isSigningIn || !authDraft.email.trim()}
-                  className="action-primary h-10 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isSigningIn ? "Signing in" : "Sign in"}
-                </button>
-              </form>
+                Sign in
+              </button>
             )}
           </section>
 

@@ -52,6 +52,7 @@ export type UpdateEventPayload = Omit<
 export type SignInPayload = {
   email: string;
   name?: string;
+  phone?: string;
 };
 
 export async function getCurrentSession() {

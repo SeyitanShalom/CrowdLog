@@ -51,6 +51,8 @@ import {
   type UpdateEventPayload,
 } from "@/lib/api-client";
 import { isValidEmailAddress } from "@/lib/email-validation";
+import { isValidPhoneNumber } from "@/lib/phone-validation";
+import type { AuthDraft } from "./auth-modal";
 import { AuthPanel } from "./template-builder/auth-panel";
 import {
   EVENT_ROLE_LABELS,
@@ -206,7 +208,11 @@ function inviteEventMissingStatus(): StatusMessage {
 export function TemplateBuilder() {
   const [draft, setDraft] = useState<EventDraft>(starterDraft);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [authDraft, setAuthDraft] = useState({ email: "", name: "" });
+  const [authDraft, setAuthDraft] = useState<AuthDraft>({
+    email: "",
+    name: "",
+    phone: "",
+  });
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [savedEvents, setSavedEvents] = useState<CrowdLogEvent[]>([]);
@@ -256,6 +262,7 @@ export function TemplateBuilder() {
             ...currentDraft,
             email: session.user?.email ?? currentDraft.email,
             name: session.user?.name ?? currentDraft.name,
+            phone: session.user?.phone ?? currentDraft.phone,
           }));
         }
 
@@ -265,6 +272,7 @@ export function TemplateBuilder() {
               setAuthDraft({
                 email: PORTFOLIO_DEMO_OWNER_EMAIL,
                 name: PORTFOLIO_DEMO_OWNER_NAME,
+                phone: "",
               });
             }
             setSavedEvents([]);
@@ -419,6 +427,7 @@ export function TemplateBuilder() {
   async function signIn() {
     const email = authDraft.email.trim();
     const name = authDraft.name.trim();
+    const phone = authDraft.phone.trim();
 
     if (!email) {
       setStatus({ tone: "error", text: "Email is required to sign in." });
@@ -430,6 +439,11 @@ export function TemplateBuilder() {
       return;
     }
 
+    if (phone && !isValidPhoneNumber(phone)) {
+      setStatus({ tone: "error", text: "Enter a valid phone number." });
+      return;
+    }
+
     setIsSigningIn(true);
     setStatus({ tone: "info", text: "Signing in." });
 
@@ -437,6 +451,7 @@ export function TemplateBuilder() {
       const session = await apiSignIn({
         email,
         name: name || undefined,
+        phone: phone || undefined,
       });
       const events = await listEvents();
       const portfolioDemoEvent = findPortfolioDemoEvent(events);
@@ -444,6 +459,11 @@ export function TemplateBuilder() {
       const requestedEvent = portfolioDemoEvent ?? inviteEvent;
 
       setCurrentUser(session.user);
+      setAuthDraft({
+        email: session.user.email,
+        name: session.user.name ?? name,
+        phone: session.user.phone ?? phone,
+      });
       setSavedEvents(events);
       setStatus({ tone: "success", text: "Signed in." });
 

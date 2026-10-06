@@ -14,15 +14,18 @@ export class AuthService {
   async signIn(dto: SignInDto) {
     const email = this.normalizeSignInEmail(dto.email);
     const name = dto.name?.trim() || null;
+    const phone = this.normalizePhone(dto.phone);
 
     const user = await this.prisma.user.upsert({
       where: { email },
       update: {
         name: name ?? undefined,
+        phone: phone ?? undefined,
       },
       create: {
         email,
         name,
+        phone,
       },
     });
 
@@ -182,6 +185,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       name: user.name,
+      phone: user.phone,
     };
   }
 
@@ -193,5 +197,19 @@ export class AuthService {
     }
 
     return email;
+  }
+
+  private normalizePhone(value: string | undefined) {
+    const phone = value?.trim() || null;
+
+    if (!phone) {
+      return null;
+    }
+
+    if (!/^\+?[0-9()\-\s.]{7,32}$/.test(phone)) {
+      throw new BadRequestException("Enter a valid phone number.");
+    }
+
+    return phone;
   }
 }

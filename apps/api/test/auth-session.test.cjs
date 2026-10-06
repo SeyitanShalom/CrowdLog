@@ -33,6 +33,7 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
     id: "user_owner",
     email: "owner@example.com",
     name: "Owner User",
+    phone: "+2348012345678",
   };
   let createdSession;
 
@@ -42,6 +43,7 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
         ...user,
         email: input.where.email,
         name: input.create.name,
+        phone: input.create.phone,
       })),
     },
     userSession: {
@@ -75,6 +77,7 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
   const session = await service.signIn({
     email: " OWNER@Example.COM ",
     name: " Owner User ",
+    phone: " +2348012345678 ",
   });
   const cookie = service.sessionCookie(session.token, session.expiresAt);
   const currentUser = await service.currentUser(cookie);
@@ -82,10 +85,34 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
   assert.deepEqual(prisma.user.upsert.calls[0][0].where, {
     email: "owner@example.com",
   });
+  assert.deepEqual(prisma.user.upsert.calls[0][0].create, {
+    email: "owner@example.com",
+    name: "Owner User",
+    phone: "+2348012345678",
+  });
+  assert.deepEqual(prisma.user.upsert.calls[0][0].update, {
+    name: "Owner User",
+    phone: "+2348012345678",
+  });
   assert.equal(createdSession.userId, "user_owner");
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
   assert.deepEqual(currentUser, user);
+});
+
+test("sign-in rejects invalid phone numbers before creating a user", async () => {
+  const prisma = {
+    user: {
+      upsert: mockFn(),
+    },
+  };
+  const service = new AuthService(prisma);
+
+  await assert.rejects(
+    () => service.signIn({ email: "owner@example.com", phone: "call-me" }),
+    BadRequestException,
+  );
+  assert.equal(prisma.user.upsert.calls.length, 0);
 });
 
 test("sign-in rejects invalid email addresses before creating a user", async () => {
@@ -115,6 +142,7 @@ test("currentUser deletes expired sessions and returns null", async () => {
           id: "user_owner",
           email: "owner@example.com",
           name: null,
+          phone: null,
         },
       })),
       delete: mockFn(async () => null),
@@ -143,6 +171,7 @@ test("signOut clears the stored session token hash", async () => {
         id: "user_owner",
         email: "owner@example.com",
         name: null,
+        phone: null,
       })),
     },
     userSession: {
@@ -189,6 +218,7 @@ test("AuthGuard attaches authenticated users to protected requests", async () =>
     id: "user_owner",
     email: "owner@example.com",
     name: null,
+    phone: null,
   };
   const guard = new AuthGuard({
     currentUser: mockFn(async () => user),
