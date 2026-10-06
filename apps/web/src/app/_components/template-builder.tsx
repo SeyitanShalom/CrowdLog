@@ -41,12 +41,14 @@ import {
   rejectAttendanceRecord,
   replaceAttendanceDocument,
   removeEventMember,
-  signIn as apiSignIn,
+  requestEmailOtp,
   signOut as apiSignOut,
   updateAttendanceRecord,
   updateEvent,
   updateEventMember,
   uploadAttendanceDocument,
+  verifyEmailOtp,
+  type AuthOtpMode,
   type CreateEventPayload,
   type UpdateEventPayload,
 } from "@/lib/api-client";
@@ -424,7 +426,7 @@ export function TemplateBuilder() {
     !isEditingExistingEvent ||
     (editingEvent ? canManageEvent(editingEvent, currentUser) : false);
 
-  async function signIn() {
+  function validateAuthDraft(mode: AuthOtpMode) {
     const email = authDraft.email.trim();
     const name = authDraft.name.trim();
     const phone = authDraft.phone.trim();
@@ -439,19 +441,75 @@ export function TemplateBuilder() {
       return;
     }
 
+    if (mode === "sign-up" && !name) {
+      setStatus({ tone: "error", text: "Name is required to create an account." });
+      return;
+    }
+
+    if (mode === "sign-up" && !phone) {
+      setStatus({
+        tone: "error",
+        text: "Phone number is required to create an account.",
+      });
+      return;
+    }
+
     if (phone && !isValidPhoneNumber(phone)) {
       setStatus({ tone: "error", text: "Enter a valid phone number." });
       return;
     }
 
+    return { email, name, phone };
+  }
+
+  async function requestAuthOtp(mode: AuthOtpMode) {
+    const authProfile = validateAuthDraft(mode);
+
+    if (!authProfile) {
+      return false;
+    }
+
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Signing in." });
+    setStatus({ tone: "info", text: "Sending verification code." });
 
     try {
-      const session = await apiSignIn({
-        email,
-        name: name || undefined,
-        phone: phone || undefined,
+      await requestEmailOtp({
+        mode,
+        email: authProfile.email,
+        name: authProfile.name || undefined,
+        phone: authProfile.phone || undefined,
+      });
+      setStatus({ tone: "success", text: "Verification code sent." });
+
+      return true;
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        text: `Could not send code. ${getErrorMessage(error)}`,
+      });
+
+      return false;
+    } finally {
+      setIsSigningIn(false);
+    }
+  }
+
+  async function verifyAuthOtp(token: string) {
+    const authProfile = validateAuthDraft("sign-in");
+
+    if (!authProfile) {
+      return false;
+    }
+
+    setIsSigningIn(true);
+    setStatus({ tone: "info", text: "Verifying email." });
+
+    try {
+      const session = await verifyEmailOtp({
+        email: authProfile.email,
+        token,
+        name: authProfile.name || undefined,
+        phone: authProfile.phone || undefined,
       });
       const events = await listEvents();
       const portfolioDemoEvent = findPortfolioDemoEvent(events);
@@ -461,8 +519,8 @@ export function TemplateBuilder() {
       setCurrentUser(session.user);
       setAuthDraft({
         email: session.user.email,
-        name: session.user.name ?? name,
-        phone: session.user.phone ?? phone,
+        name: session.user.name ?? authProfile.name,
+        phone: session.user.phone ?? authProfile.phone,
       });
       setSavedEvents(events);
       setStatus({ tone: "success", text: "Signed in." });
@@ -476,11 +534,15 @@ export function TemplateBuilder() {
       } else if (requestedInviteEventId()) {
         setStatus(inviteEventMissingStatus());
       }
+
+      return true;
     } catch (error) {
       setStatus({
         tone: "error",
-        text: `Could not sign in. ${getErrorMessage(error)}`,
+        text: `Could not verify code. ${getErrorMessage(error)}`,
       });
+
+      return false;
     } finally {
       setIsSigningIn(false);
       setIsLoadingEvents(false);
@@ -1396,15 +1458,15 @@ export function TemplateBuilder() {
       <header className="sticky top-0 z-30 shrink-0 border-b border-white/50 bg-white/62 shadow-[0_18px_60px_rgba(124,69,32,0.08)] backdrop-blur-2xl">
         <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-5 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="motion-rise flex min-w-0 items-center gap-4">
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-[#f97316] via-[#fb923c] to-[#0f766e] text-sm font-black text-white shadow-[0_14px_30px_rgba(249,115,22,0.28)]">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-[#ff6a00] text-sm font-black text-white shadow-[0_14px_30px_rgba(249,115,22,0.28)]">
               CL
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#f97316]">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#ff6a00]">
                 CrowdLog
               </p>
               <h1 className="mt-1 text-2xl font-semibold tracking-normal text-[#2f241b] sm:text-3xl">
-              Attendance sheets into clean records.
+                Attendance sheets into clean records.
               </h1>
             </div>
           </div>
@@ -1435,7 +1497,8 @@ export function TemplateBuilder() {
               isLoadingSession={isLoadingSession}
               isSigningIn={isSigningIn}
               onAuthDraftChange={setAuthDraft}
-              onSignIn={signIn}
+              onRequestOtp={requestAuthOtp}
+              onVerifyOtp={verifyAuthOtp}
               onSignOut={signOut}
             />
           </div>
@@ -1447,7 +1510,10 @@ export function TemplateBuilder() {
       ) : null}
 
       <main className="mx-auto grid w-full max-w-[1480px] gap-6 px-4 py-6 sm:px-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:overflow-hidden lg:px-8 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <section id="portfolio-template-builder" className="scroll-mt-5 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-2 lg:pb-6">
+        <section
+          id="portfolio-template-builder"
+          className="scroll-mt-5 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-2 lg:pb-6"
+        >
           <div className="glass-panel motion-rise overflow-hidden rounded-lg">
             <div className="panel-head px-4 py-4 sm:px-5">
               <h2 className="text-lg font-semibold text-[#2f241b]">Event</h2>
@@ -1458,7 +1524,7 @@ export function TemplateBuilder() {
                 <input
                   value={draft.title}
                   onChange={(event) => updateDraft("title", event.target.value)}
-                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
               <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
@@ -1469,7 +1535,7 @@ export function TemplateBuilder() {
                   onChange={(event) =>
                     updateDraft("eventDate", event.target.value)
                   }
-                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
               <label className="grid gap-1.5 text-sm font-medium text-[#334033] sm:col-span-2">
@@ -1480,7 +1546,7 @@ export function TemplateBuilder() {
                     updateDraft("description", event.target.value)
                   }
                   rows={3}
-                  className="min-h-24 resize-y rounded-md border border-[#cbd5c8] bg-white px-3 py-2 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                  className="min-h-24 resize-y rounded-md border border-[#cbd5c8] bg-white px-3 py-2 text-sm font-normal outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
             </div>
@@ -1513,7 +1579,7 @@ export function TemplateBuilder() {
                   onChange={(event) =>
                     updateDraft("templateName", event.target.value)
                   }
-                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
 
@@ -1537,140 +1603,140 @@ export function TemplateBuilder() {
                   </div>
                 ) : (
                   draft.fields.map((field, index) => (
-                  <article
-                    key={field.id}
-                    className="field-card overflow-hidden rounded-lg border"
-                  >
-                    <div className="flex flex-col gap-3 border-b border-[#dce8e4] bg-white/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-md bg-gradient-to-br from-[#f97316] to-[#0f766e] px-2 text-sm font-semibold text-white shadow-sm">
-                          {index + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-[#2f241b]">
-                            {field.label || `Field ${index + 1}`}
-                          </p>
-                          <p className="mt-1 block truncate text-xs font-medium text-[#6d7f7c]">
-                            Order {index + 1} in this attendance template
-                          </p>
+                    <article
+                      key={field.id}
+                      className="field-card overflow-hidden rounded-lg border"
+                    >
+                      <div className="flex flex-col gap-3 border-b border-[#dce8e4] bg-white/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-md bg-gradient-to-br from-[#ff6a00] to-[#fff700] px-2 text-sm font-semibold text-white shadow-sm">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-[#2f241b]">
+                              {field.label || `Field ${index + 1}`}
+                            </p>
+                            <p className="mt-1 block truncate text-xs font-medium text-[#6d7f7c]">
+                              Order {index + 1} in this attendance template
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <span className="inline-flex h-8 items-center rounded-md border border-[#cbd8c8] bg-white px-2.5 text-xs font-semibold text-[#36513f]">
+                            {FIELD_TYPE_LABELS[field.type]}
+                          </span>
+                          {field.required ? (
+                            <span className="inline-flex h-8 items-center rounded-md border border-[#d7d0bd] bg-[#f8f1dd] px-2.5 text-xs font-semibold text-[#66562b]">
+                              Required
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        <span className="inline-flex h-8 items-center rounded-md border border-[#cbd8c8] bg-white px-2.5 text-xs font-semibold text-[#36513f]">
-                          {FIELD_TYPE_LABELS[field.type]}
-                        </span>
-                        {field.required ? (
-                          <span className="inline-flex h-8 items-center rounded-md border border-[#d7d0bd] bg-[#f8f1dd] px-2.5 text-xs font-semibold text-[#66562b]">
-                            Required
-                          </span>
-                        ) : null}
+                      <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 sm:px-4 xl:grid-cols-[minmax(220px,1fr)_150px_150px_minmax(220px,1fr)]">
+                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] xl:col-span-2">
+                          Label
+                          <input
+                            value={field.label}
+                            onChange={(event) =>
+                              updateFieldLabel(field.id, event.target.value)
+                            }
+                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                          />
+                        </label>
+
+                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+                          Type
+                          <select
+                            value={field.type}
+                            onChange={(event) =>
+                              updateField(field.id, (currentField) => ({
+                                ...currentField,
+                                type: event.target.value as FieldType,
+                              }))
+                            }
+                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                          >
+                            {FIELD_TYPES.map((type) => (
+                              <option key={type} value={type}>
+                                {FIELD_TYPE_LABELS[type]}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#dfe4dc] bg-white px-3 text-sm font-medium text-[#334033]">
+                          <input
+                            type="checkbox"
+                            checked={field.required}
+                            onChange={(event) =>
+                              updateField(field.id, (currentField) => ({
+                                ...currentField,
+                                required: event.target.checked,
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-[#aebbac] accent-[#ff6a00]"
+                          />
+                          Required
+                        </label>
+
+                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] sm:col-span-2 xl:col-span-2">
+                          Aliases
+                          <input
+                            value={field.aliasesText}
+                            onChange={(event) =>
+                              updateField(field.id, (currentField) => ({
+                                ...currentField,
+                                aliasesText: event.target.value,
+                              }))
+                            }
+                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                          />
+                        </label>
+
+                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] sm:col-span-2 xl:col-span-2">
+                          Options
+                          <input
+                            value={field.optionsText}
+                            disabled={!fieldUsesOptions(field.type)}
+                            onChange={(event) =>
+                              updateField(field.id, (currentField) => ({
+                                ...currentField,
+                                optionsText: event.target.value,
+                              }))
+                            }
+                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:bg-[#f1f3ee] disabled:text-[#8a9588] focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                          />
+                        </label>
                       </div>
-                    </div>
 
-                    <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 sm:px-4 xl:grid-cols-[minmax(220px,1fr)_150px_150px_minmax(220px,1fr)]">
-                      <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] xl:col-span-2">
-                        Label
-                        <input
-                          value={field.label}
-                          onChange={(event) =>
-                            updateFieldLabel(field.id, event.target.value)
-                          }
-                          className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-                        />
-                      </label>
-
-                      <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
-                        Type
-                        <select
-                          value={field.type}
-                          onChange={(event) =>
-                            updateField(field.id, (currentField) => ({
-                              ...currentField,
-                              type: event.target.value as FieldType,
-                            }))
-                          }
-                          className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                      <div className="flex flex-col gap-2 border-t border-[#e8ece5] bg-white/62 px-3 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-4">
+                        <button
+                          type="button"
+                          onClick={() => moveField(field.id, -1)}
+                          disabled={index === 0}
+                          className="h-10 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          {FIELD_TYPES.map((type) => (
-                            <option key={type} value={type}>
-                              {FIELD_TYPE_LABELS[type]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#dfe4dc] bg-white px-3 text-sm font-medium text-[#334033]">
-                        <input
-                          type="checkbox"
-                          checked={field.required}
-                          onChange={(event) =>
-                            updateField(field.id, (currentField) => ({
-                              ...currentField,
-                              required: event.target.checked,
-                            }))
-                          }
-                          className="h-4 w-4 rounded border-[#aebbac] accent-[#f97316]"
-                        />
-                        Required
-                      </label>
-
-                      <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] sm:col-span-2 xl:col-span-2">
-                        Aliases
-                        <input
-                          value={field.aliasesText}
-                          onChange={(event) =>
-                            updateField(field.id, (currentField) => ({
-                              ...currentField,
-                              aliasesText: event.target.value,
-                            }))
-                          }
-                          className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-                        />
-                      </label>
-
-                      <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] sm:col-span-2 xl:col-span-2">
-                        Options
-                        <input
-                          value={field.optionsText}
-                          disabled={!fieldUsesOptions(field.type)}
-                          onChange={(event) =>
-                            updateField(field.id, (currentField) => ({
-                              ...currentField,
-                              optionsText: event.target.value,
-                            }))
-                          }
-                          className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:bg-[#f1f3ee] disabled:text-[#8a9588] focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="flex flex-col gap-2 border-t border-[#e8ece5] bg-white/62 px-3 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-4">
-                      <button
-                        type="button"
-                        onClick={() => moveField(field.id, -1)}
-                        disabled={index === 0}
-                        className="h-10 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        Move up
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => moveField(field.id, 1)}
-                        disabled={index === draft.fields.length - 1}
-                        className="h-10 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        Move down
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeField(field.id)}
-                        className="h-10 rounded-md border border-[#d9b7aa] px-3 text-sm font-medium text-[#8a3d2d] transition hover:bg-[#fff1ed]"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </article>
+                          Move up
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveField(field.id, 1)}
+                          disabled={index === draft.fields.length - 1}
+                          className="h-10 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          Move down
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeField(field.id)}
+                          className="h-10 rounded-md border border-[#d9b7aa] px-3 text-sm font-medium text-[#8a3d2d] transition hover:bg-[#fff1ed]"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </article>
                   ))
                 )}
               </div>
@@ -1681,7 +1747,7 @@ export function TemplateBuilder() {
                     <p
                       className={
                         status.tone === "success"
-                          ? "font-medium text-[#f97316]"
+                          ? "font-medium text-[#ff6a00]"
                           : status.tone === "error"
                             ? "font-medium text-[#a33f2f]"
                             : "font-medium text-[#546657]"
@@ -1797,7 +1863,9 @@ export function TemplateBuilder() {
                       </span>
                     ))
                   ) : (
-                    <span className="text-[#6d7f7c]">Add fields to see the mix.</span>
+                    <span className="text-[#6d7f7c]">
+                      Add fields to see the mix.
+                    </span>
                   )}
                 </div>
               </div>
@@ -1854,7 +1922,10 @@ export function TemplateBuilder() {
                   const isOwner = eventRole === "owner";
 
                   return (
-                    <div key={event.id} className="px-4 py-4 transition hover:bg-white/42">
+                    <div
+                      key={event.id}
+                      className="px-4 py-4 transition hover:bg-white/42"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-[#2f241b]">
@@ -1882,7 +1953,7 @@ export function TemplateBuilder() {
                             type="button"
                             onClick={() => selectReviewEvent(event)}
                             disabled={isDeleting}
-                              className="action-primary h-9 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                            className="action-primary h-9 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Review
                           </button>

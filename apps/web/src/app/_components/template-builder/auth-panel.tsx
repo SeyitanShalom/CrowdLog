@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { AuthUser } from "@crowdlog/shared";
+import type { AuthOtpMode } from "@/lib/api-client";
 import { AuthModal, type AuthDraft } from "../auth-modal";
 
 export function AuthPanel({
@@ -10,7 +11,8 @@ export function AuthPanel({
   isLoadingSession,
   isSigningIn,
   onAuthDraftChange,
-  onSignIn,
+  onRequestOtp,
+  onVerifyOtp,
   onSignOut,
 }: {
   currentUser: AuthUser | null;
@@ -18,7 +20,8 @@ export function AuthPanel({
   isLoadingSession: boolean;
   isSigningIn: boolean;
   onAuthDraftChange: (draft: AuthDraft) => void;
-  onSignIn: () => void;
+  onRequestOtp: (mode: AuthOtpMode) => Promise<boolean>;
+  onVerifyOtp: (token: string) => Promise<boolean>;
   onSignOut: () => void;
 }) {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -75,7 +78,8 @@ export function AuthPanel({
           isSigningIn={isSigningIn}
           onAuthDraftChange={onAuthDraftChange}
           onClose={() => setIsAuthModalOpen(false)}
-          onSubmit={onSignIn}
+          onRequestOtp={onRequestOtp}
+          onVerifyOtp={onVerifyOtp}
         />
       ) : null}
     </>

@@ -14,9 +14,11 @@ import {
   getCurrentSession,
   getEvent,
   removeEventMember,
-  signIn as apiSignIn,
+  requestEmailOtp,
   signOut as apiSignOut,
   updateEventMember,
+  verifyEmailOtp,
+  type AuthOtpMode,
 } from "@/lib/api-client";
 import {
   EMAIL_INPUT_PATTERN,
@@ -148,7 +150,7 @@ export function TeamManagementRoute() {
     };
   }, [loadEvent]);
 
-  async function signIn() {
+  function validateAuthDraft(mode: AuthOtpMode) {
     const email = authDraft.email.trim();
     const name = authDraft.name.trim();
     const phone = authDraft.phone.trim();
@@ -163,34 +165,94 @@ export function TeamManagementRoute() {
       return;
     }
 
+    if (mode === "sign-up" && !name) {
+      setStatus({ tone: "error", text: "Name is required to create an account." });
+      return;
+    }
+
+    if (mode === "sign-up" && !phone) {
+      setStatus({
+        tone: "error",
+        text: "Phone number is required to create an account.",
+      });
+      return;
+    }
+
     if (phone && !isValidPhoneNumber(phone)) {
       setStatus({ tone: "error", text: "Enter a valid phone number." });
       return;
     }
 
+    return { email, name, phone };
+  }
+
+  async function requestAuthOtp(mode: AuthOtpMode) {
+    const authProfile = validateAuthDraft(mode);
+
+    if (!authProfile) {
+      return false;
+    }
+
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Signing in." });
+    setStatus({ tone: "info", text: "Sending verification code." });
 
     try {
-      const result = await apiSignIn({
-        email,
-        name: name || undefined,
-        phone: phone || undefined,
+      await requestEmailOtp({
+        mode,
+        email: authProfile.email,
+        name: authProfile.name || undefined,
+        phone: authProfile.phone || undefined,
+      });
+      setStatus({ tone: "success", text: "Verification code sent." });
+
+      return true;
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        text: `Could not send code. ${getErrorMessage(error)}`,
+      });
+
+      return false;
+    } finally {
+      setIsSigningIn(false);
+    }
+  }
+
+  async function verifyAuthOtp(token: string) {
+    const authProfile = validateAuthDraft("sign-in");
+
+    if (!authProfile) {
+      return false;
+    }
+
+    setIsSigningIn(true);
+    setStatus({ tone: "info", text: "Verifying email." });
+
+    try {
+      const result = await verifyEmailOtp({
+        email: authProfile.email,
+        token,
+        name: authProfile.name || undefined,
+        phone: authProfile.phone || undefined,
       });
 
       setCurrentUser(result.user);
       setAuthDraft({
         email: result.user.email,
-        name: result.user.name ?? name,
-        phone: result.user.phone ?? phone,
+        name: result.user.name ?? authProfile.name,
+        phone: result.user.phone ?? authProfile.phone,
       });
       setIsAuthModalOpen(false);
       await loadEvent();
+
+      return true;
     } catch (error) {
       setStatus({
         tone: "error",
-        text: `Could not sign in. ${getErrorMessage(error)}`,
+        text: `Could not verify code. ${getErrorMessage(error)}`,
       });
+
+      return false;
     } finally {
       setIsSigningIn(false);
     }
@@ -397,7 +459,8 @@ export function TeamManagementRoute() {
           isSigningIn={isSigningIn}
           onAuthDraftChange={setAuthDraft}
           onClose={() => setIsAuthModalOpen(false)}
-          onSubmit={signIn}
+          onRequestOtp={requestAuthOtp}
+          onVerifyOtp={verifyAuthOtp}
         />
       ) : null}
 

@@ -1,21 +1,88 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { EventMemberRole } from "@prisma/client";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { isEmail } from "class-validator";
 import { createHash, randomBytes } from "node:crypto";
 import { AUTH_COOKIE_NAME, SESSION_TTL_DAYS } from "./auth.constants";
 import type { AuthenticatedUser } from "./auth.types";
+import type { RequestEmailOtpDto } from "./dto/request-email-otp.dto";
 import type { SignInDto } from "./dto/sign-in.dto";
+import type { VerifyEmailOtpDto } from "./dto/verify-email-otp.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
 export class AuthService {
+  private supabaseClient: SupabaseClient | undefined;
+
   constructor(private readonly prisma: PrismaService) {}
+
+  async requestEmailOtp(dto: RequestEmailOtpDto) {
+    const email = this.normalizeSignInEmail(dto.email);
+    const name = dto.name?.trim() || null;
+    const phone = this.normalizePhone(dto.phone);
+
+    if (dto.mode === "sign-up") {
+      this.ensureCompleteSignUpProfile(name, phone);
+    }
+
+    const { error } = await this.supabaseAuth().auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: dto.mode === "sign-up",
+        data: {
+          name,
+          phone,
+        },
+      },
+    });
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { ok: true };
+  }
+
+  async verifyEmailOtp(dto: VerifyEmailOtpDto) {
+    const email = this.normalizeSignInEmail(dto.email);
+    const token = dto.token.trim();
+    const name = dto.name?.trim() || null;
+    const phone = this.normalizePhone(dto.phone);
+
+    const { data, error } = await this.supabaseAuth().auth.verifyOtp({
+      email,
+      token,
+      type: "email",
+    });
+
+    if (error || !data.user?.email) {
+      throw new BadRequestException("Invalid or expired verification code.");
+    }
+
+    return this.createSessionForProfile({
+      email: this.normalizeSignInEmail(data.user.email),
+      name,
+      phone,
+    });
+  }
 
   async signIn(dto: SignInDto) {
     const email = this.normalizeSignInEmail(dto.email);
     const name = dto.name?.trim() || null;
     const phone = this.normalizePhone(dto.phone);
 
+    return this.createSessionForProfile({ email, name, phone });
+  }
+
+  private async createSessionForProfile({
+    email,
+    name,
+    phone,
+  }: {
+    email: string;
+    name: string | null;
+    phone: string | null;
+  }) {
     const user = await this.prisma.user.upsert({
       where: { email },
       update: {
@@ -211,5 +278,47 @@ export class AuthService {
     }
 
     return phone;
+  }
+
+  private ensureCompleteSignUpProfile(
+    name: string | null,
+    phone: string | null,
+  ) {
+    if (!name) {
+      throw new BadRequestException("Name is required to create an account.");
+    }
+
+    if (!phone) {
+      throw new BadRequestException(
+        "Phone number is required to create an account.",
+      );
+    }
+  }
+
+  private supabaseAuth() {
+    if (this.supabaseClient) {
+      return this.supabaseClient;
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL?.trim();
+    const supabaseKey =
+      process.env.SUPABASE_ANON_KEY?.trim() ||
+      process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
+      process.env.SUPABASE_STORAGE_SERVICE_ROLE_KEY?.trim();
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new BadRequestException(
+        "Supabase Auth is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY.",
+      );
+    }
+
+    this.supabaseClient = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+
+    return this.supabaseClient;
   }
 }

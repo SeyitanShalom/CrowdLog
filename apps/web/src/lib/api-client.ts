@@ -55,8 +55,32 @@ export type SignInPayload = {
   phone?: string;
 };
 
+export type AuthOtpMode = "sign-in" | "sign-up";
+
+export type RequestEmailOtpPayload = SignInPayload & {
+  mode: AuthOtpMode;
+};
+
+export type VerifyEmailOtpPayload = SignInPayload & {
+  token: string;
+};
+
 export async function getCurrentSession() {
   return request<AuthSession>("/auth/me");
+}
+
+export async function requestEmailOtp(payload: RequestEmailOtpPayload) {
+  return request<{ ok: true }>("/auth/otp/request", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function verifyEmailOtp(payload: VerifyEmailOtpPayload) {
+  return request<{ user: AuthUser }>("/auth/otp/verify", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function signIn(payload: SignInPayload) {

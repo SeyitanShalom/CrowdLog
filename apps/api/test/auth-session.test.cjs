@@ -130,6 +130,89 @@ test("sign-in rejects invalid email addresses before creating a user", async () 
   assert.equal(prisma.user.upsert.calls.length, 0);
 });
 
+test("requestEmailOtp sends login codes without creating new auth users", async () => {
+  const service = new AuthService({});
+  const signInWithOtp = mockFn(async () => ({ data: {}, error: null }));
+  service.supabaseClient = {
+    auth: {
+      signInWithOtp,
+    },
+  };
+
+  const result = await service.requestEmailOtp({
+    email: " OWNER@Example.COM ",
+    mode: "sign-in",
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(signInWithOtp.calls[0][0], {
+    email: "owner@example.com",
+    options: {
+      shouldCreateUser: false,
+      data: {
+        name: null,
+        phone: null,
+      },
+    },
+  });
+});
+
+test("verifyEmailOtp creates an app session after Supabase verifies the code", async () => {
+  let createdSession;
+  const prisma = {
+    user: {
+      upsert: mockFn(async (input) => ({
+        id: "user_owner",
+        email: input.where.email,
+        name: input.create.name,
+        phone: input.create.phone,
+      })),
+    },
+    userSession: {
+      create: mockFn(async (input) => {
+        createdSession = input.data;
+        return { id: "session_owner", ...input.data };
+      }),
+    },
+    event: {
+      findMany: mockFn(async () => []),
+      updateMany: mockFn(),
+    },
+    eventMembership: {
+      createMany: mockFn(),
+    },
+    $transaction: mockFn(),
+  };
+  const service = new AuthService(prisma);
+  const verifyOtp = mockFn(async () => ({
+    data: { user: { email: "OWNER@Example.COM" } },
+    error: null,
+  }));
+  service.supabaseClient = {
+    auth: {
+      verifyOtp,
+    },
+  };
+
+  const session = await service.verifyEmailOtp({
+    email: "owner@example.com",
+    token: "123456",
+    name: "Owner User",
+    phone: "+2348012345678",
+  });
+
+  assert.deepEqual(verifyOtp.calls[0][0], {
+    email: "owner@example.com",
+    token: "123456",
+    type: "email",
+  });
+  assert.deepEqual(prisma.user.upsert.calls[0][0].where, {
+    email: "owner@example.com",
+  });
+  assert.equal(createdSession.userId, "user_owner");
+  assert.equal(session.user.phone, "+2348012345678");
+});
+
 test("currentUser deletes expired sessions and returns null", async () => {
   const prisma = {
     userSession: {

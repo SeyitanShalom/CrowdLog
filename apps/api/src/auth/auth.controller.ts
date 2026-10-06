@@ -1,6 +1,16 @@
-import { Body, Controller, Get, Post, Req, Res } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  Res,
+} from "@nestjs/common";
 import { AuthService } from "./auth.service";
+import { RequestEmailOtpDto } from "./dto/request-email-otp.dto";
 import { SignInDto } from "./dto/sign-in.dto";
+import { VerifyEmailOtpDto } from "./dto/verify-email-otp.dto";
 
 type RequestWithCookies = {
   headers: {
@@ -28,7 +38,23 @@ export class AuthController {
     @Body() dto: SignInDto,
     @Res({ passthrough: true }) response: HeaderResponse,
   ) {
-    const session = await this.authService.signIn(dto);
+    void dto;
+    void response;
+
+    throw new BadRequestException("Use email OTP to sign in.");
+  }
+
+  @Post("otp/request")
+  async requestEmailOtp(@Body() dto: RequestEmailOtpDto) {
+    return this.authService.requestEmailOtp(dto);
+  }
+
+  @Post("otp/verify")
+  async verifyEmailOtp(
+    @Body() dto: VerifyEmailOtpDto,
+    @Res({ passthrough: true }) response: HeaderResponse,
+  ) {
+    const session = await this.authService.verifyEmailOtp(dto);
 
     response.setHeader(
       "Set-Cookie",
