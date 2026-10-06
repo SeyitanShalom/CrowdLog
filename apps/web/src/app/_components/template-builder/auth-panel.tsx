@@ -1,4 +1,5 @@
 import type { AuthUser } from "@crowdlog/shared";
+import { EMAIL_INPUT_PATTERN } from "@/lib/email-validation";
 
 export function AuthPanel({
   currentUser,
@@ -58,6 +59,11 @@ export function AuthPanel({
     >
       <input
         type="email"
+        required
+        maxLength={254}
+        pattern={EMAIL_INPUT_PATTERN}
+        title="Enter a valid email address."
+        autoComplete="email"
         value={authDraft.email}
         placeholder="Email"
         onChange={(event) =>
@@ -66,6 +72,8 @@ export function AuthPanel({
         className="h-9 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
       />
       <input
+        maxLength={80}
+        autoComplete="name"
         value={authDraft.name}
         placeholder="Name"
         onChange={(event) =>

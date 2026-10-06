@@ -15,6 +15,7 @@ import {
   type TemplateField,
 } from "@crowdlog/shared";
 import { getApiFileUrl } from "@/lib/api-client";
+import { EMAIL_INPUT_PATTERN } from "@/lib/email-validation";
 import {
   EVENT_ROLE_LABELS,
   FIELD_TYPE_LABELS,
@@ -823,6 +824,11 @@ function EventMembersPanel({
             Reviewer email
             <input
               type="email"
+              required
+              maxLength={254}
+              pattern={EMAIL_INPUT_PATTERN}
+              title="Enter a valid reviewer email."
+              autoComplete="email"
               value={memberDraft.email}
               onChange={(inputEvent) =>
                 onMemberDraftChange({
@@ -836,6 +842,8 @@ function EventMembersPanel({
           <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
             Display name
             <input
+              maxLength={80}
+              autoComplete="name"
               value={memberDraft.name}
               onChange={(inputEvent) =>
                 onMemberDraftChange({

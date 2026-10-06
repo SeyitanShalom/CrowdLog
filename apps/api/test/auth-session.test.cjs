@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { UnauthorizedException } = require("@nestjs/common");
+const { BadRequestException, UnauthorizedException } = require("@nestjs/common");
 const { AuthGuard } = require("../dist/auth/auth.guard");
 const { AuthService } = require("../dist/auth/auth.service");
 
@@ -86,6 +86,21 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
   assert.deepEqual(currentUser, user);
+});
+
+test("sign-in rejects invalid email addresses before creating a user", async () => {
+  const prisma = {
+    user: {
+      upsert: mockFn(),
+    },
+  };
+  const service = new AuthService(prisma);
+
+  await assert.rejects(
+    () => service.signIn({ email: "not-an-email" }),
+    BadRequestException,
+  );
+  assert.equal(prisma.user.upsert.calls.length, 0);
 });
 
 test("currentUser deletes expired sessions and returns null", async () => {

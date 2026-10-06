@@ -1,5 +1,6 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { EventMemberRole } from "@prisma/client";
+import { isEmail } from "class-validator";
 import { createHash, randomBytes } from "node:crypto";
 import { AUTH_COOKIE_NAME, SESSION_TTL_DAYS } from "./auth.constants";
 import type { AuthenticatedUser } from "./auth.types";
@@ -11,7 +12,7 @@ export class AuthService {
   constructor(private readonly prisma: PrismaService) {}
 
   async signIn(dto: SignInDto) {
-    const email = dto.email.trim().toLowerCase();
+    const email = this.normalizeSignInEmail(dto.email);
     const name = dto.name?.trim() || null;
 
     const user = await this.prisma.user.upsert({
@@ -182,5 +183,15 @@ export class AuthService {
       email: user.email,
       name: user.name,
     };
+  }
+
+  private normalizeSignInEmail(value: unknown) {
+    const email = typeof value === "string" ? value.trim().toLowerCase() : "";
+
+    if (!isEmail(email)) {
+      throw new BadRequestException("Enter a valid email address.");
+    }
+
+    return email;
   }
 }

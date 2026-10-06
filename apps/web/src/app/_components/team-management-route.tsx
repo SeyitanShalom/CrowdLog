@@ -18,6 +18,10 @@ import {
   signOut as apiSignOut,
   updateEventMember,
 } from "@/lib/api-client";
+import {
+  EMAIL_INPUT_PATTERN,
+  isValidEmailAddress,
+} from "@/lib/email-validation";
 import { WebsiteHelpDialog } from "./help-dialog";
 
 const EVENT_ROLE_LABELS: Record<EventMemberRole, string> = {
@@ -145,6 +149,11 @@ export function TeamManagementRoute() {
       return;
     }
 
+    if (!isValidEmailAddress(email)) {
+      setStatus({ tone: "error", text: "Enter a valid email address." });
+      return;
+    }
+
     setIsSigningIn(true);
     setStatus({ tone: "info", text: "Signing in." });
 
@@ -186,6 +195,11 @@ export function TeamManagementRoute() {
 
     if (!email) {
       setStatus({ tone: "error", text: "Reviewer email is required." });
+      return;
+    }
+
+    if (!isValidEmailAddress(email)) {
+      setStatus({ tone: "error", text: "Enter a valid reviewer email." });
       return;
     }
 
@@ -390,6 +404,11 @@ export function TeamManagementRoute() {
                   Email
                   <input
                     type="email"
+                    required
+                    maxLength={254}
+                    pattern={EMAIL_INPUT_PATTERN}
+                    title="Enter a valid email address."
+                    autoComplete="email"
                     value={authDraft.email}
                     onChange={(inputEvent) =>
                       setAuthDraft({
@@ -403,6 +422,8 @@ export function TeamManagementRoute() {
                 <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
                   Name
                   <input
+                    maxLength={80}
+                    autoComplete="name"
                     value={authDraft.name}
                     onChange={(inputEvent) =>
                       setAuthDraft({
@@ -456,6 +477,11 @@ export function TeamManagementRoute() {
                   Reviewer email
                   <input
                     type="email"
+                    required
+                    maxLength={254}
+                    pattern={EMAIL_INPUT_PATTERN}
+                    title="Enter a valid reviewer email."
+                    autoComplete="email"
                     value={memberDraft.email}
                     onChange={(inputEvent) =>
                       setMemberDraft({
@@ -469,6 +495,8 @@ export function TeamManagementRoute() {
                 <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
                   Display name
                   <input
+                    maxLength={80}
+                    autoComplete="name"
                     value={memberDraft.name}
                     onChange={(inputEvent) =>
                       setMemberDraft({

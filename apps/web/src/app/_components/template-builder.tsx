@@ -50,6 +50,7 @@ import {
   type CreateEventPayload,
   type UpdateEventPayload,
 } from "@/lib/api-client";
+import { isValidEmailAddress } from "@/lib/email-validation";
 import { AuthPanel } from "./template-builder/auth-panel";
 import {
   EVENT_ROLE_LABELS,
@@ -421,6 +422,11 @@ export function TemplateBuilder() {
 
     if (!email) {
       setStatus({ tone: "error", text: "Email is required to sign in." });
+      return;
+    }
+
+    if (!isValidEmailAddress(email)) {
+      setStatus({ tone: "error", text: "Enter a valid email address." });
       return;
     }
 
@@ -832,6 +838,11 @@ export function TemplateBuilder() {
 
     if (!email) {
       setReviewStatus({ tone: "error", text: "Reviewer email is required." });
+      return;
+    }
+
+    if (!isValidEmailAddress(email)) {
+      setReviewStatus({ tone: "error", text: "Enter a valid reviewer email." });
       return;
     }
 
