@@ -10,6 +10,7 @@ export type AuthDraft = {
   email: string;
   name: string;
   phone: string;
+  password: string;
 };
 
 type AuthModalProps = {
@@ -17,7 +18,8 @@ type AuthModalProps = {
   isSigningIn: boolean;
   onAuthDraftChange: (draft: AuthDraft) => void;
   onClose: () => void;
-  onRequestOtp: (mode: AuthOtpMode) => Promise<boolean>;
+  onRequestOtp: () => Promise<boolean>;
+  onSignIn: () => Promise<boolean>;
   onVerifyOtp: (token: string) => Promise<boolean>;
 };
 
@@ -26,12 +28,15 @@ const authModeLabels: Record<AuthOtpMode, string> = {
   "sign-up": "Create account",
 };
 
+const MIN_PASSWORD_LENGTH = 6;
+
 export function AuthModal({
   authDraft,
   isSigningIn,
   onAuthDraftChange,
   onClose,
   onRequestOtp,
+  onSignIn,
   onVerifyOtp,
 }: AuthModalProps) {
   const [mode, setMode] = useState<AuthOtpMode>("sign-in");
@@ -41,11 +46,19 @@ export function AuthModal({
   const isCreatingAccount = mode === "sign-up";
 
   async function requestCode() {
-    const didSendCode = await onRequestOtp(mode);
+    const didSendCode = await onRequestOtp();
 
     if (didSendCode) {
       setToken("");
       setStep("code");
+    }
+  }
+
+  async function signIn() {
+    const didSignIn = await onSignIn();
+
+    if (didSignIn) {
+      onClose();
     }
   }
 
@@ -78,12 +91,17 @@ export function AuthModal({
         onMouseDown={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          if (step === "profile") {
+          if (step === "code") {
+            void verifyCode();
+            return;
+          }
+
+          if (isCreatingAccount) {
             void requestCode();
             return;
           }
 
-          void verifyCode();
+          void signIn();
         }}
       >
         <div className="panel-head flex items-start justify-between gap-4 px-5 py-4">
@@ -117,7 +135,11 @@ export function AuthModal({
                     <button
                       key={authMode}
                       type="button"
-                      onClick={() => setMode(authMode)}
+                      onClick={() => {
+                        setMode(authMode);
+                        setStep("profile");
+                        setToken("");
+                      }}
                       className={`h-9 rounded-md text-sm font-semibold transition ${
                         mode === authMode
                           ? "bg-[#f97316] text-white shadow-sm"
@@ -130,22 +152,24 @@ export function AuthModal({
                 )}
               </div>
 
-              <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
-                Name
-                <input
-                  required={isCreatingAccount}
-                  maxLength={80}
-                  autoComplete="name"
-                  value={authDraft.name}
-                  onChange={(event) =>
-                    onAuthDraftChange({
-                      ...authDraft,
-                      name: event.target.value,
-                    })
-                  }
-                  className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
-                />
-              </label>
+              {isCreatingAccount ? (
+                <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
+                  Name
+                  <input
+                    required
+                    maxLength={80}
+                    autoComplete="name"
+                    value={authDraft.name}
+                    onChange={(event) =>
+                      onAuthDraftChange({
+                        ...authDraft,
+                        name: event.target.value,
+                      })
+                    }
+                    className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                  />
+                </label>
+              ) : null}
 
               <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
                 Email
@@ -167,20 +191,44 @@ export function AuthModal({
                 />
               </label>
 
+              {isCreatingAccount ? (
+                <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
+                  Phone number
+                  <input
+                    type="tel"
+                    required
+                    maxLength={32}
+                    pattern={PHONE_INPUT_PATTERN}
+                    title="Enter a valid phone number."
+                    autoComplete="tel"
+                    value={authDraft.phone}
+                    onChange={(event) =>
+                      onAuthDraftChange({
+                        ...authDraft,
+                        phone: event.target.value,
+                      })
+                    }
+                    className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+                  />
+                </label>
+              ) : null}
+
               <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
-                Phone number
+                Password
                 <input
-                  type="tel"
-                  required={isCreatingAccount}
-                  maxLength={32}
-                  pattern={PHONE_INPUT_PATTERN}
-                  title="Enter a valid phone number."
-                  autoComplete="tel"
-                  value={authDraft.phone}
+                  type="password"
+                  required
+                  minLength={MIN_PASSWORD_LENGTH}
+                  maxLength={72}
+                  title={`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`}
+                  autoComplete={
+                    isCreatingAccount ? "new-password" : "current-password"
+                  }
+                  value={authDraft.password}
                   onChange={(event) =>
                     onAuthDraftChange({
                       ...authDraft,
-                      phone: event.target.value,
+                      password: event.target.value,
                     })
                   }
                   className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
@@ -222,11 +270,15 @@ export function AuthModal({
           >
             {isSigningIn
               ? step === "profile"
-                ? "Sending code"
+                ? isCreatingAccount
+                  ? "Sending code"
+                  : "Signing in"
                 : "Verifying"
               : step === "profile"
-                ? "Send code"
-                : "Verify and sign in"}
+                ? isCreatingAccount
+                  ? "Send code"
+                  : "Sign in"
+                : "Verify and create account"}
           </button>
         </div>
       </form>

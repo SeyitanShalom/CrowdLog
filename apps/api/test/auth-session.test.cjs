@@ -28,7 +28,7 @@ function createExecutionContext(request) {
   };
 }
 
-test("sign-in normalizes email, creates a session, and currentUser reads it", async () => {
+test("sign-in verifies the password, creates a session, and currentUser reads it", async () => {
   const user = {
     id: "user_owner",
     email: "owner@example.com",
@@ -73,15 +73,35 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
     $transaction: mockFn(),
   };
   const service = new AuthService(prisma);
+  const signInWithPassword = mockFn(async () => ({
+    data: {
+      user: {
+        email: "OWNER@Example.COM",
+        user_metadata: {
+          name: "Owner User",
+          phone: "+2348012345678",
+        },
+      },
+    },
+    error: null,
+  }));
+  service.supabaseClient = {
+    auth: {
+      signInWithPassword,
+    },
+  };
 
   const session = await service.signIn({
     email: " OWNER@Example.COM ",
-    name: " Owner User ",
-    phone: " +2348012345678 ",
+    password: "secret1",
   });
   const cookie = service.sessionCookie(session.token, session.expiresAt);
   const currentUser = await service.currentUser(cookie);
 
+  assert.deepEqual(signInWithPassword.calls[0][0], {
+    email: "owner@example.com",
+    password: "secret1",
+  });
   assert.deepEqual(prisma.user.upsert.calls[0][0].where, {
     email: "owner@example.com",
   });
@@ -100,19 +120,26 @@ test("sign-in normalizes email, creates a session, and currentUser reads it", as
   assert.deepEqual(currentUser, user);
 });
 
-test("sign-in rejects invalid phone numbers before creating a user", async () => {
+test("sign-in rejects short passwords before checking Supabase", async () => {
   const prisma = {
     user: {
       upsert: mockFn(),
     },
   };
   const service = new AuthService(prisma);
+  const signInWithPassword = mockFn();
+  service.supabaseClient = {
+    auth: {
+      signInWithPassword,
+    },
+  };
 
   await assert.rejects(
-    () => service.signIn({ email: "owner@example.com", phone: "call-me" }),
+    () => service.signIn({ email: "owner@example.com", password: "12345" }),
     BadRequestException,
   );
   assert.equal(prisma.user.upsert.calls.length, 0);
+  assert.equal(signInWithPassword.calls.length, 0);
 });
 
 test("sign-in rejects invalid email addresses before creating a user", async () => {
@@ -124,34 +151,40 @@ test("sign-in rejects invalid email addresses before creating a user", async () 
   const service = new AuthService(prisma);
 
   await assert.rejects(
-    () => service.signIn({ email: "not-an-email" }),
+    () => service.signIn({ email: "not-an-email", password: "secret1" }),
     BadRequestException,
   );
   assert.equal(prisma.user.upsert.calls.length, 0);
 });
 
-test("requestEmailOtp sends login codes without creating new auth users", async () => {
+test("requestEmailOtp starts sign-up with a password and profile", async () => {
   const service = new AuthService({});
-  const signInWithOtp = mockFn(async () => ({ data: {}, error: null }));
+  const signUp = mockFn(async () => ({
+    data: { user: { identities: [{ id: "identity_owner" }] } },
+    error: null,
+  }));
   service.supabaseClient = {
     auth: {
-      signInWithOtp,
+      signUp,
     },
   };
 
   const result = await service.requestEmailOtp({
     email: " OWNER@Example.COM ",
-    mode: "sign-in",
+    mode: "sign-up",
+    name: "Owner User",
+    phone: "+2348012345678",
+    password: "secret1",
   });
 
   assert.deepEqual(result, { ok: true });
-  assert.deepEqual(signInWithOtp.calls[0][0], {
+  assert.deepEqual(signUp.calls[0][0], {
     email: "owner@example.com",
+    password: "secret1",
     options: {
-      shouldCreateUser: false,
       data: {
-        name: null,
-        phone: null,
+        name: "Owner User",
+        phone: "+2348012345678",
       },
     },
   });
@@ -204,7 +237,7 @@ test("verifyEmailOtp creates an app session after Supabase verifies the code", a
   assert.deepEqual(verifyOtp.calls[0][0], {
     email: "owner@example.com",
     token: "123456",
-    type: "email",
+    type: "signup",
   });
   assert.deepEqual(prisma.user.upsert.calls[0][0].where, {
     email: "owner@example.com",
@@ -277,7 +310,23 @@ test("signOut clears the stored session token hash", async () => {
     $transaction: mockFn(),
   };
   const service = new AuthService(prisma);
-  const session = await service.signIn({ email: "owner@example.com" });
+  service.supabaseClient = {
+    auth: {
+      signInWithPassword: mockFn(async () => ({
+        data: {
+          user: {
+            email: "owner@example.com",
+            user_metadata: {},
+          },
+        },
+        error: null,
+      })),
+    },
+  };
+  const session = await service.signIn({
+    email: "owner@example.com",
+    password: "secret1",
+  });
 
   await service.signOut(service.sessionCookie(session.token, session.expiresAt));
 

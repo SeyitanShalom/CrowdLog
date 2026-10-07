@@ -20,15 +20,14 @@ export class AuthService {
     const email = this.normalizeSignInEmail(dto.email);
     const name = dto.name?.trim() || null;
     const phone = this.normalizePhone(dto.phone);
+    const password = this.normalizePassword(dto.password);
 
-    if (dto.mode === "sign-up") {
-      this.ensureCompleteSignUpProfile(name, phone);
-    }
+    this.ensureCompleteSignUpProfile(name, phone);
 
-    const { error } = await this.supabaseAuth().auth.signInWithOtp({
+    const { data, error } = await this.supabaseAuth().auth.signUp({
       email,
+      password,
       options: {
-        shouldCreateUser: dto.mode === "sign-up",
         data: {
           name,
           phone,
@@ -38,6 +37,15 @@ export class AuthService {
 
     if (error) {
       throw new BadRequestException(error.message);
+    }
+
+    const identities = (data.user as { identities?: unknown[] } | null)
+      ?.identities;
+
+    if (Array.isArray(identities) && identities.length === 0) {
+      throw new BadRequestException(
+        "An account already exists for this email. Sign in with your password.",
+      );
     }
 
     return { ok: true };
@@ -52,7 +60,7 @@ export class AuthService {
     const { data, error } = await this.supabaseAuth().auth.verifyOtp({
       email,
       token,
-      type: "email",
+      type: "signup",
     });
 
     if (error || !data.user?.email) {
@@ -68,10 +76,24 @@ export class AuthService {
 
   async signIn(dto: SignInDto) {
     const email = this.normalizeSignInEmail(dto.email);
-    const name = dto.name?.trim() || null;
-    const phone = this.normalizePhone(dto.phone);
+    const password = this.normalizePassword(dto.password);
 
-    return this.createSessionForProfile({ email, name, phone });
+    const { data, error } = await this.supabaseAuth().auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error || !data.user?.email) {
+      throw new BadRequestException("Invalid email or password.");
+    }
+
+    const metadata = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+
+    return this.createSessionForProfile({
+      email: this.normalizeSignInEmail(data.user.email),
+      name: this.normalizeMetadataName(metadata.name),
+      phone: this.normalizeMetadataPhone(metadata.phone),
+    });
   }
 
   private async createSessionForProfile({
@@ -278,6 +300,34 @@ export class AuthService {
     }
 
     return phone;
+  }
+
+  private normalizeMetadataName(value: unknown) {
+    const name = typeof value === "string" ? value.trim() : "";
+
+    return name ? name.slice(0, 80) : null;
+  }
+
+  private normalizeMetadataPhone(value: unknown) {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    return this.normalizePhone(value);
+  }
+
+  private normalizePassword(value: unknown) {
+    const password = typeof value === "string" ? value : "";
+
+    if (password.length < 6) {
+      throw new BadRequestException("Password must be at least 6 characters.");
+    }
+
+    if (password.length > 72) {
+      throw new BadRequestException("Password must be 72 characters or fewer.");
+    }
+
+    return password;
   }
 
   private ensureCompleteSignUpProfile(

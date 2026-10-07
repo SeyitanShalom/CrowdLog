@@ -5,6 +5,7 @@ import {
   IsString,
   Matches,
   MaxLength,
+  MinLength,
 } from "class-validator";
 
 export class RequestEmailOtpDto {
@@ -12,8 +13,8 @@ export class RequestEmailOtpDto {
   @MaxLength(254)
   email: string;
 
-  @IsIn(["sign-in", "sign-up"])
-  mode: "sign-in" | "sign-up";
+  @IsIn(["sign-up"])
+  mode: "sign-up";
 
   @IsOptional()
   @IsString()
@@ -27,4 +28,9 @@ export class RequestEmailOtpDto {
     message: "phone must be a valid phone number",
   })
   phone?: string;
+
+  @IsString()
+  @MinLength(6)
+  @MaxLength(72)
+  password: string;
 }

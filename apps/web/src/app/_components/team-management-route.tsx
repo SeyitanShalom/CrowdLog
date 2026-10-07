@@ -15,6 +15,7 @@ import {
   getEvent,
   removeEventMember,
   requestEmailOtp,
+  signIn as apiSignIn,
   signOut as apiSignOut,
   updateEventMember,
   verifyEmailOtp,
@@ -33,6 +34,8 @@ const EVENT_ROLE_LABELS: Record<EventMemberRole, string> = {
   reviewer: "Reviewer",
 };
 
+const MIN_PASSWORD_LENGTH = 6;
+
 type StatusMessage = {
   tone: "success" | "error" | "info";
   text: string;
@@ -49,6 +52,7 @@ export function TeamManagementRoute() {
     email: "",
     name: "",
     phone: "",
+    password: "",
   });
   const [event, setEvent] = useState<CrowdLogEvent | null>(null);
   const [memberDraft, setMemberDraft] = useState({ email: "", name: "" });
@@ -154,6 +158,7 @@ export function TeamManagementRoute() {
     const email = authDraft.email.trim();
     const name = authDraft.name.trim();
     const phone = authDraft.phone.trim();
+    const password = authDraft.password;
 
     if (!email) {
       setStatus({ tone: "error", text: "Email is required." });
@@ -162,6 +167,25 @@ export function TeamManagementRoute() {
 
     if (!isValidEmailAddress(email)) {
       setStatus({ tone: "error", text: "Enter a valid email address." });
+      return;
+    }
+
+    if (!password) {
+      setStatus({
+        tone: "error",
+        text:
+          mode === "sign-up"
+            ? "Password is required to create an account."
+            : "Password is required to sign in.",
+      });
+      return;
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setStatus({
+        tone: "error",
+        text: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+      });
       return;
     }
 
@@ -178,16 +202,16 @@ export function TeamManagementRoute() {
       return;
     }
 
-    if (phone && !isValidPhoneNumber(phone)) {
+    if (mode === "sign-up" && !isValidPhoneNumber(phone)) {
       setStatus({ tone: "error", text: "Enter a valid phone number." });
       return;
     }
 
-    return { email, name, phone };
+    return { email, name, phone, password };
   }
 
-  async function requestAuthOtp(mode: AuthOtpMode) {
-    const authProfile = validateAuthDraft(mode);
+  async function requestAuthOtp() {
+    const authProfile = validateAuthDraft("sign-up");
 
     if (!authProfile) {
       return false;
@@ -198,10 +222,11 @@ export function TeamManagementRoute() {
 
     try {
       await requestEmailOtp({
-        mode,
+        mode: "sign-up",
         email: authProfile.email,
         name: authProfile.name || undefined,
         phone: authProfile.phone || undefined,
+        password: authProfile.password,
       });
       setStatus({ tone: "success", text: "Verification code sent." });
 
@@ -219,7 +244,7 @@ export function TeamManagementRoute() {
   }
 
   async function verifyAuthOtp(token: string) {
-    const authProfile = validateAuthDraft("sign-in");
+    const authProfile = validateAuthDraft("sign-up");
 
     if (!authProfile) {
       return false;
@@ -241,6 +266,7 @@ export function TeamManagementRoute() {
         email: result.user.email,
         name: result.user.name ?? authProfile.name,
         phone: result.user.phone ?? authProfile.phone,
+        password: "",
       });
       setIsAuthModalOpen(false);
       await loadEvent();
@@ -258,11 +284,51 @@ export function TeamManagementRoute() {
     }
   }
 
+  async function signIn() {
+    const authProfile = validateAuthDraft("sign-in");
+
+    if (!authProfile) {
+      return false;
+    }
+
+    setIsSigningIn(true);
+    setStatus({ tone: "info", text: "Signing in." });
+
+    try {
+      const result = await apiSignIn({
+        email: authProfile.email,
+        password: authProfile.password,
+      });
+
+      setCurrentUser(result.user);
+      setAuthDraft({
+        email: result.user.email,
+        name: result.user.name ?? "",
+        phone: result.user.phone ?? "",
+        password: "",
+      });
+      setIsAuthModalOpen(false);
+      await loadEvent();
+
+      return true;
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        text: `Could not sign in. ${getErrorMessage(error)}`,
+      });
+
+      return false;
+    } finally {
+      setIsSigningIn(false);
+    }
+  }
+
   async function signOut() {
     await apiSignOut();
     setCurrentUser(null);
     setEvent(null);
     setIsAuthModalOpen(false);
+    setAuthDraft((currentDraft) => ({ ...currentDraft, password: "" }));
     setMemberDraft({ email: "", name: "" });
     setStatus({ tone: "info", text: "Signed out." });
   }
@@ -460,6 +526,7 @@ export function TeamManagementRoute() {
           onAuthDraftChange={setAuthDraft}
           onClose={() => setIsAuthModalOpen(false)}
           onRequestOtp={requestAuthOtp}
+          onSignIn={signIn}
           onVerifyOtp={verifyAuthOtp}
         />
       ) : null}

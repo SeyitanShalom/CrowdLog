@@ -1,12 +1,4 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  Post,
-  Req,
-  Res,
-} from "@nestjs/common";
+import { Body, Controller, Get, Post, Req, Res } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { RequestEmailOtpDto } from "./dto/request-email-otp.dto";
 import { SignInDto } from "./dto/sign-in.dto";
@@ -38,10 +30,14 @@ export class AuthController {
     @Body() dto: SignInDto,
     @Res({ passthrough: true }) response: HeaderResponse,
   ) {
-    void dto;
-    void response;
+    const session = await this.authService.signIn(dto);
 
-    throw new BadRequestException("Use email OTP to sign in.");
+    response.setHeader(
+      "Set-Cookie",
+      this.authService.sessionCookie(session.token, session.expiresAt),
+    );
+
+    return { user: session.user };
   }
 
   @Post("otp/request")

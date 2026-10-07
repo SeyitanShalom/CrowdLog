@@ -49,7 +49,7 @@ export type UpdateEventPayload = Omit<
   >;
 };
 
-export type SignInPayload = {
+export type AuthProfilePayload = {
   email: string;
   name?: string;
   phone?: string;
@@ -57,11 +57,17 @@ export type SignInPayload = {
 
 export type AuthOtpMode = "sign-in" | "sign-up";
 
-export type RequestEmailOtpPayload = SignInPayload & {
-  mode: AuthOtpMode;
+export type SignInPayload = {
+  email: string;
+  password: string;
 };
 
-export type VerifyEmailOtpPayload = SignInPayload & {
+export type RequestEmailOtpPayload = AuthProfilePayload & {
+  mode: "sign-up";
+  password: string;
+};
+
+export type VerifyEmailOtpPayload = AuthProfilePayload & {
   token: string;
 };
 

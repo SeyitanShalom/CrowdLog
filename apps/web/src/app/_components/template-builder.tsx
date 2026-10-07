@@ -42,6 +42,7 @@ import {
   replaceAttendanceDocument,
   removeEventMember,
   requestEmailOtp,
+  signIn as apiSignIn,
   signOut as apiSignOut,
   updateAttendanceRecord,
   updateEvent,
@@ -78,6 +79,7 @@ import { WebsiteHelpDialog } from "./help-dialog";
 const PORTFOLIO_DEMO_EVENT_TITLE = "Portfolio Demo: Computer Science Seminar";
 const PORTFOLIO_DEMO_OWNER_EMAIL = "owner.demo@crowdlog.local";
 const PORTFOLIO_DEMO_OWNER_NAME = "Amina Okafor";
+const MIN_PASSWORD_LENGTH = 6;
 
 const starterDraft: EventDraft = {
   title: "",
@@ -214,6 +216,7 @@ export function TemplateBuilder() {
     email: "",
     name: "",
     phone: "",
+    password: "",
   });
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -275,6 +278,7 @@ export function TemplateBuilder() {
                 email: PORTFOLIO_DEMO_OWNER_EMAIL,
                 name: PORTFOLIO_DEMO_OWNER_NAME,
                 phone: "",
+                password: "",
               });
             }
             setSavedEvents([]);
@@ -430,6 +434,7 @@ export function TemplateBuilder() {
     const email = authDraft.email.trim();
     const name = authDraft.name.trim();
     const phone = authDraft.phone.trim();
+    const password = authDraft.password;
 
     if (!email) {
       setStatus({ tone: "error", text: "Email is required to sign in." });
@@ -438,6 +443,25 @@ export function TemplateBuilder() {
 
     if (!isValidEmailAddress(email)) {
       setStatus({ tone: "error", text: "Enter a valid email address." });
+      return;
+    }
+
+    if (!password) {
+      setStatus({
+        tone: "error",
+        text:
+          mode === "sign-up"
+            ? "Password is required to create an account."
+            : "Password is required to sign in.",
+      });
+      return;
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setStatus({
+        tone: "error",
+        text: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+      });
       return;
     }
 
@@ -454,16 +478,16 @@ export function TemplateBuilder() {
       return;
     }
 
-    if (phone && !isValidPhoneNumber(phone)) {
+    if (mode === "sign-up" && !isValidPhoneNumber(phone)) {
       setStatus({ tone: "error", text: "Enter a valid phone number." });
       return;
     }
 
-    return { email, name, phone };
+    return { email, name, phone, password };
   }
 
-  async function requestAuthOtp(mode: AuthOtpMode) {
-    const authProfile = validateAuthDraft(mode);
+  async function requestAuthOtp() {
+    const authProfile = validateAuthDraft("sign-up");
 
     if (!authProfile) {
       return false;
@@ -474,10 +498,11 @@ export function TemplateBuilder() {
 
     try {
       await requestEmailOtp({
-        mode,
+        mode: "sign-up",
         email: authProfile.email,
         name: authProfile.name || undefined,
         phone: authProfile.phone || undefined,
+        password: authProfile.password,
       });
       setStatus({ tone: "success", text: "Verification code sent." });
 
@@ -495,7 +520,7 @@ export function TemplateBuilder() {
   }
 
   async function verifyAuthOtp(token: string) {
-    const authProfile = validateAuthDraft("sign-in");
+    const authProfile = validateAuthDraft("sign-up");
 
     if (!authProfile) {
       return false;
@@ -521,6 +546,61 @@ export function TemplateBuilder() {
         email: session.user.email,
         name: session.user.name ?? authProfile.name,
         phone: session.user.phone ?? authProfile.phone,
+        password: "",
+      });
+      setSavedEvents(events);
+      setStatus({ tone: "success", text: "Account created and signed in." });
+
+      if (requestedEvent) {
+        setDraft(eventToDraft(requestedEvent));
+        setEditingEventId(requestedEvent.id);
+        await selectReviewEvent(requestedEvent);
+      } else if (shouldOpenPortfolioDemo()) {
+        setStatus(portfolioDemoMissingStatus());
+      } else if (requestedInviteEventId()) {
+        setStatus(inviteEventMissingStatus());
+      }
+
+      return true;
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        text: `Could not verify code. ${getErrorMessage(error)}`,
+      });
+
+      return false;
+    } finally {
+      setIsSigningIn(false);
+      setIsLoadingEvents(false);
+    }
+  }
+
+  async function signIn() {
+    const authProfile = validateAuthDraft("sign-in");
+
+    if (!authProfile) {
+      return false;
+    }
+
+    setIsSigningIn(true);
+    setStatus({ tone: "info", text: "Signing in." });
+
+    try {
+      const session = await apiSignIn({
+        email: authProfile.email,
+        password: authProfile.password,
+      });
+      const events = await listEvents();
+      const portfolioDemoEvent = findPortfolioDemoEvent(events);
+      const inviteEvent = findInviteEvent(events);
+      const requestedEvent = portfolioDemoEvent ?? inviteEvent;
+
+      setCurrentUser(session.user);
+      setAuthDraft({
+        email: session.user.email,
+        name: session.user.name ?? "",
+        phone: session.user.phone ?? "",
+        password: "",
       });
       setSavedEvents(events);
       setStatus({ tone: "success", text: "Signed in." });
@@ -539,7 +619,7 @@ export function TemplateBuilder() {
     } catch (error) {
       setStatus({
         tone: "error",
-        text: `Could not verify code. ${getErrorMessage(error)}`,
+        text: `Could not sign in. ${getErrorMessage(error)}`,
       });
 
       return false;
@@ -570,6 +650,7 @@ export function TemplateBuilder() {
       setFieldSuggestions([]);
       setReviewStatus(null);
       setStatus({ tone: "info", text: "Signed out." });
+      setAuthDraft((currentDraft) => ({ ...currentDraft, password: "" }));
       setIsLoadingEvents(false);
       setIsSigningIn(false);
     }
@@ -1498,6 +1579,7 @@ export function TemplateBuilder() {
               isSigningIn={isSigningIn}
               onAuthDraftChange={setAuthDraft}
               onRequestOtp={requestAuthOtp}
+              onSignIn={signIn}
               onVerifyOtp={verifyAuthOtp}
               onSignOut={signOut}
             />
