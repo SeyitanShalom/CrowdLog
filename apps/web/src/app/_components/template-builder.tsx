@@ -18,6 +18,7 @@ import {
   type EventDraft,
   type EventRecordAnalytics,
   type FieldType,
+  type MockExtractionResult,
   type OcrFieldSuggestion,
   type RecordCellValue,
   type TemplateField,
@@ -210,6 +211,7 @@ function inviteEventMissingStatus(): StatusMessage {
 }
 
 export function TemplateBuilder() {
+  const [hasHydrated, setHasHydrated] = useState(false);
   const [draft, setDraft] = useState<EventDraft>(starterDraft);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [authDraft, setAuthDraft] = useState<AuthDraft>({
@@ -225,6 +227,7 @@ export function TemplateBuilder() {
   const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<StatusMessage>(null);
+  const [authStatus, setAuthStatus] = useState<StatusMessage>(null);
   const [reviewEvent, setReviewEvent] = useState<CrowdLogEvent | null>(null);
   const [documents, setDocuments] = useState<AttendanceDocumentSummary[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
@@ -253,6 +256,10 @@ export function TemplateBuilder() {
   const [addingFieldKeys, setAddingFieldKeys] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState<StatusMessage>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+
+  useEffect(() => {
+    setHasHydrated(true);
+  }, []);
 
   useEffect(() => {
     let shouldIgnore = false;
@@ -437,17 +444,17 @@ export function TemplateBuilder() {
     const password = authDraft.password;
 
     if (!email) {
-      setStatus({ tone: "error", text: "Email is required to sign in." });
+      setAuthStatus({ tone: "error", text: "Email is required to sign in." });
       return;
     }
 
     if (!isValidEmailAddress(email)) {
-      setStatus({ tone: "error", text: "Enter a valid email address." });
+      setAuthStatus({ tone: "error", text: "Enter a valid email address." });
       return;
     }
 
     if (!password) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text:
           mode === "sign-up"
@@ -458,7 +465,7 @@ export function TemplateBuilder() {
     }
 
     if (password.length < MIN_PASSWORD_LENGTH) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
       });
@@ -466,12 +473,15 @@ export function TemplateBuilder() {
     }
 
     if (mode === "sign-up" && !name) {
-      setStatus({ tone: "error", text: "Name is required to create an account." });
+      setAuthStatus({
+        tone: "error",
+        text: "Name is required to create an account.",
+      });
       return;
     }
 
     if (mode === "sign-up" && !phone) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: "Phone number is required to create an account.",
       });
@@ -479,7 +489,7 @@ export function TemplateBuilder() {
     }
 
     if (mode === "sign-up" && !isValidPhoneNumber(phone)) {
-      setStatus({ tone: "error", text: "Enter a valid phone number." });
+      setAuthStatus({ tone: "error", text: "Enter a valid phone number." });
       return;
     }
 
@@ -494,7 +504,7 @@ export function TemplateBuilder() {
     }
 
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Sending verification code." });
+    setAuthStatus({ tone: "info", text: "Sending verification code." });
 
     try {
       await requestEmailOtp({
@@ -502,13 +512,12 @@ export function TemplateBuilder() {
         email: authProfile.email,
         name: authProfile.name || undefined,
         phone: authProfile.phone || undefined,
-        password: authProfile.password,
       });
-      setStatus({ tone: "success", text: "Verification code sent." });
+      setAuthStatus({ tone: "success", text: "Verification code sent." });
 
       return true;
     } catch (error) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Could not send code. ${getErrorMessage(error)}`,
       });
@@ -527,7 +536,7 @@ export function TemplateBuilder() {
     }
 
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Verifying email." });
+    setAuthStatus({ tone: "info", text: "Verifying email." });
 
     try {
       const session = await verifyEmailOtp({
@@ -535,6 +544,7 @@ export function TemplateBuilder() {
         token,
         name: authProfile.name || undefined,
         phone: authProfile.phone || undefined,
+        password: authProfile.password,
       });
       const events = await listEvents();
       const portfolioDemoEvent = findPortfolioDemoEvent(events);
@@ -549,6 +559,7 @@ export function TemplateBuilder() {
         password: "",
       });
       setSavedEvents(events);
+      setAuthStatus(null);
       setStatus({ tone: "success", text: "Account created and signed in." });
 
       if (requestedEvent) {
@@ -563,7 +574,7 @@ export function TemplateBuilder() {
 
       return true;
     } catch (error) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Could not verify code. ${getErrorMessage(error)}`,
       });
@@ -583,7 +594,7 @@ export function TemplateBuilder() {
     }
 
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Signing in." });
+    setAuthStatus({ tone: "info", text: "Signing in." });
 
     try {
       const session = await apiSignIn({
@@ -603,6 +614,7 @@ export function TemplateBuilder() {
         password: "",
       });
       setSavedEvents(events);
+      setAuthStatus(null);
       setStatus({ tone: "success", text: "Signed in." });
 
       if (requestedEvent) {
@@ -617,7 +629,7 @@ export function TemplateBuilder() {
 
       return true;
     } catch (error) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Could not sign in. ${getErrorMessage(error)}`,
       });
@@ -650,6 +662,7 @@ export function TemplateBuilder() {
       setFieldSuggestions([]);
       setReviewStatus(null);
       setStatus({ tone: "info", text: "Signed out." });
+      setAuthStatus(null);
       setAuthDraft((currentDraft) => ({ ...currentDraft, password: "" }));
       setIsLoadingEvents(false);
       setIsSigningIn(false);
@@ -1150,10 +1163,10 @@ export function TemplateBuilder() {
       setSelectedDocumentId(document.id);
       await refreshRecordAnalytics(reviewEvent.id);
       setReviewStatus({ tone: "success", text: "Attendance sheet uploaded." });
-    } catch {
+    } catch (error) {
       setReviewStatus({
         tone: "error",
-        text: "Could not upload this attendance sheet.",
+        text: `Could not upload this attendance sheet. ${getErrorMessage(error)}`,
       });
     } finally {
       setIsUploadingDocument(false);
@@ -1249,47 +1262,52 @@ export function TemplateBuilder() {
       return;
     }
 
+    const isExtractingSelectedDocument = Boolean(selectedDocumentId);
+    const extractionOptions = {
+      rowCount: 25,
+      ...options,
+    };
+
     setIsMockExtracting(true);
     setReviewStatus({
       tone: "info",
-      text: selectedDocumentId
+      text: isExtractingSelectedDocument
         ? "Extracting selected file."
         : "Generating mock rows.",
     });
 
     try {
-      const result = selectedDocumentId
-        ? await extractDocument(selectedDocumentId, {
-            rowCount: 25,
-            ...options,
-          })
+      let result = selectedDocumentId
+        ? await extractDocument(selectedDocumentId, extractionOptions)
         : await mockExtractRecords(reviewEvent.id, 4);
+      const addedFieldCount =
+        isExtractingSelectedDocument && canManageReviewEvent
+          ? await addSuggestedFieldsToTemplate(result.suggestedFields ?? [])
+          : 0;
+
+      if (selectedDocumentId && addedFieldCount > 0) {
+        setReviewStatus({
+          tone: "info",
+          text: `Added ${addedFieldCount} discovered ${
+            addedFieldCount === 1 ? "column" : "columns"
+          }. Re-reading the file.`,
+        });
+        result = await extractDocument(selectedDocumentId, extractionOptions);
+      }
+
       setFieldSuggestions(result.suggestedFields ?? []);
-      setRecords((currentRecords) => [
-        ...result.records,
-        ...currentRecords.filter(
-          (record) => record.documentId !== result.document.id,
-        ),
-      ]);
-      setDocuments((currentDocuments) => {
-        const hasDocument = currentDocuments.some(
-          (document) => document.id === result.document.id,
-        );
-
-        if (hasDocument) {
-          return currentDocuments.map((document) =>
-            document.id === result.document.id ? result.document : document,
-          );
-        }
-
-        return [result.document, ...currentDocuments];
-      });
-      setSelectedDocumentId(result.document.id);
+      applyExtractionResult(result);
       await refreshRecordAnalytics(reviewEvent.id);
       setReviewStatus({
         tone: "success",
-        text: selectedDocumentId
-          ? `Extracted ${result.records.length} rows for review.`
+        text: isExtractingSelectedDocument
+          ? `Extracted ${result.records.length} rows for review${
+              addedFieldCount > 0
+                ? ` and added ${addedFieldCount} discovered ${
+                    addedFieldCount === 1 ? "column" : "columns"
+                  }.`
+                : "."
+            }`
           : `Generated ${result.records.length} mock rows for review.`,
       });
     } catch (error) {
@@ -1299,6 +1317,95 @@ export function TemplateBuilder() {
       });
     } finally {
       setIsMockExtracting(false);
+    }
+  }
+
+  function applyExtractionResult(result: MockExtractionResult) {
+    setRecords((currentRecords) => [
+      ...result.records,
+      ...currentRecords.filter(
+        (record) => record.documentId !== result.document.id,
+      ),
+    ]);
+    setDocuments((currentDocuments) => {
+      const hasDocument = currentDocuments.some(
+        (document) => document.id === result.document.id,
+      );
+
+      if (hasDocument) {
+        return currentDocuments.map((document) =>
+          document.id === result.document.id ? result.document : document,
+        );
+      }
+
+      return [result.document, ...currentDocuments];
+    });
+    setSelectedDocumentId(result.document.id);
+  }
+
+  async function addSuggestedFieldsToTemplate(
+    suggestions: OcrFieldSuggestion[],
+  ) {
+    if (!reviewEvent || suggestions.length === 0) {
+      return 0;
+    }
+
+    const seenKeys = new Set(
+      reviewEvent.template.fields.map((field) => field.key),
+    );
+    const newSuggestions = suggestions.filter((suggestion) => {
+      if (seenKeys.has(suggestion.key)) {
+        return false;
+      }
+
+      seenKeys.add(suggestion.key);
+      return true;
+    });
+
+    if (newSuggestions.length === 0) {
+      return 0;
+    }
+
+    const addingKeys = newSuggestions.map((suggestion) => suggestion.key);
+
+    setAddingFieldKeys((currentKeys) =>
+      Array.from(new Set([...currentKeys, ...addingKeys])),
+    );
+
+    try {
+      let nextEvent = reviewEvent;
+
+      for (const suggestion of newSuggestions) {
+        const field = await createTemplateField(nextEvent.template.id, {
+          label: suggestion.label,
+          key: suggestion.key,
+          type: suggestion.type,
+          required: false,
+          sortOrder: nextEvent.template.fields.length + 1,
+          aliases: suggestion.aliases,
+          options: suggestion.options,
+        });
+
+        nextEvent = addFieldToEvent(nextEvent, field);
+      }
+
+      setReviewEvent(nextEvent);
+      setSavedEvents((currentEvents) =>
+        currentEvents.map((event) =>
+          event.id === nextEvent.id ? nextEvent : event,
+        ),
+      );
+      setFieldSuggestions((currentSuggestions) =>
+        currentSuggestions.filter(
+          (currentSuggestion) => !addingKeys.includes(currentSuggestion.key),
+        ),
+      );
+
+      return newSuggestions.length;
+    } finally {
+      setAddingFieldKeys((currentKeys) =>
+        currentKeys.filter((key) => !addingKeys.includes(key)),
+      );
     }
   }
 
@@ -1534,6 +1641,19 @@ export function TemplateBuilder() {
     }
   }
 
+  if (!hasHydrated) {
+    return (
+      <div
+        className="app-shell flex min-h-screen items-center justify-center px-4 text-[#2f241b]"
+        aria-busy="true"
+      >
+        <div className="glass-panel rounded-lg px-5 py-4 text-sm font-medium text-[#667265]">
+          Loading CrowdLog...
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell min-h-screen text-[#2f241b] lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
       <header className="sticky top-0 z-30 shrink-0 border-b border-white/50 bg-white/62 shadow-[0_18px_60px_rgba(124,69,32,0.08)] backdrop-blur-2xl">
@@ -1575,9 +1695,11 @@ export function TemplateBuilder() {
             <AuthPanel
               currentUser={currentUser}
               authDraft={authDraft}
+              authStatus={authStatus}
               isLoadingSession={isLoadingSession}
               isSigningIn={isSigningIn}
               onAuthDraftChange={setAuthDraft}
+              onAuthStatusReset={() => setAuthStatus(null)}
               onRequestOtp={requestAuthOtp}
               onSignIn={signIn}
               onVerifyOtp={verifyAuthOtp}

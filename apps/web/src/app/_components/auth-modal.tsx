@@ -13,10 +13,17 @@ export type AuthDraft = {
   password: string;
 };
 
+export type AuthStatusMessage = {
+  tone: "success" | "error" | "info";
+  text: string;
+} | null;
+
 type AuthModalProps = {
   authDraft: AuthDraft;
+  authStatus: AuthStatusMessage;
   isSigningIn: boolean;
   onAuthDraftChange: (draft: AuthDraft) => void;
+  onAuthStatusReset: () => void;
   onClose: () => void;
   onRequestOtp: () => Promise<boolean>;
   onSignIn: () => Promise<boolean>;
@@ -30,10 +37,18 @@ const authModeLabels: Record<AuthOtpMode, string> = {
 
 const MIN_PASSWORD_LENGTH = 6;
 
+const authStatusStyles = {
+  success: "border-[#bbd7b5] bg-[#f1f8ee] text-[#315b2d]",
+  error: "border-[#f2b5a8] bg-[#fff1ed] text-[#8a3d2d]",
+  info: "border-[#b9cfdf] bg-[#ebf5fb] text-[#315266]",
+} satisfies Record<NonNullable<AuthStatusMessage>["tone"], string>;
+
 export function AuthModal({
   authDraft,
+  authStatus,
   isSigningIn,
   onAuthDraftChange,
+  onAuthStatusReset,
   onClose,
   onRequestOtp,
   onSignIn,
@@ -139,6 +154,7 @@ export function AuthModal({
                         setMode(authMode);
                         setStep("profile");
                         setToken("");
+                        onAuthStatusReset();
                       }}
                       className={`h-9 rounded-md text-sm font-semibold transition ${
                         mode === authMode
@@ -242,26 +258,38 @@ export function AuthModal({
                 <input
                   inputMode="numeric"
                   required
-                  maxLength={6}
-                  pattern="\\d{6}"
-                  title="Enter the 6 digit code from your email."
+                  maxLength={8}
+                  pattern="[0-9]{6,8}"
+                  title="Enter the 6 to 8 digit verification code from your email."
                   autoComplete="one-time-code"
                   value={token}
                   onChange={(event) =>
-                    setToken(event.target.value.replace(/\D/g, "").slice(0, 6))
+                    setToken(event.target.value.replace(/\D/g, "").slice(0, 8))
                   }
                   className="h-11 rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
                 />
               </label>
               <button
                 type="button"
-                onClick={() => setStep("profile")}
+                onClick={() => {
+                  setStep("profile");
+                  onAuthStatusReset();
+                }}
                 className="h-10 rounded-md border border-[#fed7aa] bg-white/80 px-3 text-sm font-semibold text-[#70411d] hover:bg-white"
               >
                 Edit email
               </button>
             </>
           )}
+
+          {authStatus ? (
+            <p
+              role={authStatus.tone === "error" ? "alert" : "status"}
+              className={`rounded-md border px-3 py-2 text-sm font-medium ${authStatusStyles[authStatus.tone]}`}
+            >
+              {authStatus.text}
+            </p>
+          ) : null}
 
           <button
             type="submit"

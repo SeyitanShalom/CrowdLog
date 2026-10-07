@@ -5,7 +5,6 @@ import {
   IsString,
   Matches,
   MaxLength,
-  MinLength,
 } from "class-validator";
 
 export class RequestEmailOtpDto {
@@ -29,8 +28,4 @@ export class RequestEmailOtpDto {
   })
   phone?: string;
 
-  @IsString()
-  @MinLength(6)
-  @MaxLength(72)
-  password: string;
 }

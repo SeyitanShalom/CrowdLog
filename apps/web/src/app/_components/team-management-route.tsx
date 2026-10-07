@@ -26,7 +26,11 @@ import {
   isValidEmailAddress,
 } from "@/lib/email-validation";
 import { isValidPhoneNumber } from "@/lib/phone-validation";
-import { AuthModal, type AuthDraft } from "./auth-modal";
+import {
+  AuthModal,
+  type AuthDraft,
+  type AuthStatusMessage,
+} from "./auth-modal";
 import { WebsiteHelpDialog } from "./help-dialog";
 
 const EVENT_ROLE_LABELS: Record<EventMemberRole, string> = {
@@ -63,6 +67,7 @@ export function TeamManagementRoute() {
   const [removingMemberIds, setRemovingMemberIds] = useState<string[]>([]);
   const [updatingMemberIds, setUpdatingMemberIds] = useState<string[]>([]);
   const [status, setStatus] = useState<StatusMessage>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatusMessage>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
 
@@ -161,17 +166,17 @@ export function TeamManagementRoute() {
     const password = authDraft.password;
 
     if (!email) {
-      setStatus({ tone: "error", text: "Email is required." });
+      setAuthStatus({ tone: "error", text: "Email is required." });
       return;
     }
 
     if (!isValidEmailAddress(email)) {
-      setStatus({ tone: "error", text: "Enter a valid email address." });
+      setAuthStatus({ tone: "error", text: "Enter a valid email address." });
       return;
     }
 
     if (!password) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text:
           mode === "sign-up"
@@ -182,7 +187,7 @@ export function TeamManagementRoute() {
     }
 
     if (password.length < MIN_PASSWORD_LENGTH) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
       });
@@ -190,12 +195,15 @@ export function TeamManagementRoute() {
     }
 
     if (mode === "sign-up" && !name) {
-      setStatus({ tone: "error", text: "Name is required to create an account." });
+      setAuthStatus({
+        tone: "error",
+        text: "Name is required to create an account.",
+      });
       return;
     }
 
     if (mode === "sign-up" && !phone) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: "Phone number is required to create an account.",
       });
@@ -203,7 +211,7 @@ export function TeamManagementRoute() {
     }
 
     if (mode === "sign-up" && !isValidPhoneNumber(phone)) {
-      setStatus({ tone: "error", text: "Enter a valid phone number." });
+      setAuthStatus({ tone: "error", text: "Enter a valid phone number." });
       return;
     }
 
@@ -218,7 +226,7 @@ export function TeamManagementRoute() {
     }
 
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Sending verification code." });
+    setAuthStatus({ tone: "info", text: "Sending verification code." });
 
     try {
       await requestEmailOtp({
@@ -226,13 +234,12 @@ export function TeamManagementRoute() {
         email: authProfile.email,
         name: authProfile.name || undefined,
         phone: authProfile.phone || undefined,
-        password: authProfile.password,
       });
-      setStatus({ tone: "success", text: "Verification code sent." });
+      setAuthStatus({ tone: "success", text: "Verification code sent." });
 
       return true;
     } catch (error) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Could not send code. ${getErrorMessage(error)}`,
       });
@@ -251,7 +258,7 @@ export function TeamManagementRoute() {
     }
 
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Verifying email." });
+    setAuthStatus({ tone: "info", text: "Verifying email." });
 
     try {
       const result = await verifyEmailOtp({
@@ -259,6 +266,7 @@ export function TeamManagementRoute() {
         token,
         name: authProfile.name || undefined,
         phone: authProfile.phone || undefined,
+        password: authProfile.password,
       });
 
       setCurrentUser(result.user);
@@ -268,12 +276,13 @@ export function TeamManagementRoute() {
         phone: result.user.phone ?? authProfile.phone,
         password: "",
       });
+      setAuthStatus(null);
       setIsAuthModalOpen(false);
       await loadEvent();
 
       return true;
     } catch (error) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Could not verify code. ${getErrorMessage(error)}`,
       });
@@ -292,7 +301,7 @@ export function TeamManagementRoute() {
     }
 
     setIsSigningIn(true);
-    setStatus({ tone: "info", text: "Signing in." });
+    setAuthStatus({ tone: "info", text: "Signing in." });
 
     try {
       const result = await apiSignIn({
@@ -307,12 +316,13 @@ export function TeamManagementRoute() {
         phone: result.user.phone ?? "",
         password: "",
       });
+      setAuthStatus(null);
       setIsAuthModalOpen(false);
       await loadEvent();
 
       return true;
     } catch (error) {
-      setStatus({
+      setAuthStatus({
         tone: "error",
         text: `Could not sign in. ${getErrorMessage(error)}`,
       });
@@ -328,6 +338,7 @@ export function TeamManagementRoute() {
     setCurrentUser(null);
     setEvent(null);
     setIsAuthModalOpen(false);
+    setAuthStatus(null);
     setAuthDraft((currentDraft) => ({ ...currentDraft, password: "" }));
     setMemberDraft({ email: "", name: "" });
     setStatus({ tone: "info", text: "Signed out." });
@@ -522,8 +533,10 @@ export function TeamManagementRoute() {
       {isAuthModalOpen ? (
         <AuthModal
           authDraft={authDraft}
+          authStatus={authStatus}
           isSigningIn={isSigningIn}
           onAuthDraftChange={setAuthDraft}
+          onAuthStatusReset={() => setAuthStatus(null)}
           onClose={() => setIsAuthModalOpen(false)}
           onRequestOtp={requestAuthOtp}
           onSignIn={signIn}
@@ -561,7 +574,10 @@ export function TeamManagementRoute() {
             ) : (
               <button
                 type="button"
-                onClick={() => setIsAuthModalOpen(true)}
+                onClick={() => {
+                  setAuthStatus(null);
+                  setIsAuthModalOpen(true);
+                }}
                 disabled={isSigningIn}
                 className="action-primary mt-3 h-10 w-full rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >

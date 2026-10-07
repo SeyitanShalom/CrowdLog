@@ -136,9 +136,7 @@ export class UploadStorageService {
     }
 
     const supabaseUrl = process.env.SUPABASE_URL?.trim();
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
-      process.env.SUPABASE_STORAGE_SERVICE_ROLE_KEY?.trim();
+    const serviceRoleKey = this.serviceRoleKey();
 
     if (!supabaseUrl || !serviceRoleKey) {
       throw new ServiceUnavailableException(
@@ -154,6 +152,25 @@ export class UploadStorageService {
     });
 
     return this.client;
+  }
+
+  private serviceRoleKey() {
+    const key =
+      process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
+      process.env.SUPABASE_STORAGE_SERVICE_ROLE_KEY?.trim() ||
+      process.env.SUPABASE_SECRET_KEY?.trim();
+
+    if (!key) {
+      return "";
+    }
+
+    if (!/^[\x20-\x7E]+$/.test(key)) {
+      throw new ServiceUnavailableException(
+        "Supabase Storage key is invalid. Replace the redacted key in .env with the full service_role key from Supabase.",
+      );
+    }
+
+    return key;
   }
 
   private bucketName() {

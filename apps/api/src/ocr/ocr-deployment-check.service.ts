@@ -166,6 +166,25 @@ export class OcrDeploymentCheckService {
   }): DeploymentCheck[] {
     return [
       {
+        name: "ocr_accuracy_provider",
+        status:
+          azureConfigured ||
+          awsTextractConfigured ||
+          googleConfigured ||
+          googleVisionConfigured ||
+          httpConfigured
+            ? "ready"
+            : "degraded",
+        message:
+          azureConfigured ||
+          awsTextractConfigured ||
+          googleConfigured ||
+          googleVisionConfigured ||
+          httpConfigured
+            ? "A real OCR provider is configured for higher-accuracy extraction."
+            : "No cloud or HTTP OCR provider is configured; auto mode may use local Windows OCR or mock fallback, which is lower accuracy.",
+      },
+      {
         name: "azure_configuration",
         status: azureConfigured ? "ready" : "not_configured",
         message: azureConfigured

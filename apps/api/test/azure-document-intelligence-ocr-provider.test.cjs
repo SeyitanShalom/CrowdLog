@@ -385,6 +385,70 @@ test("configured OCR provider reports native PDF support when auto mode can use 
   }
 });
 
+test("configured OCR provider prefers Azure over local Windows OCR in auto mode", async () => {
+  const previousEnv = {
+    OCR_PROVIDER: process.env.OCR_PROVIDER,
+    OCR_FALLBACK_TO_MOCK: process.env.OCR_FALLBACK_TO_MOCK,
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+    AZURE_DOCUMENT_INTELLIGENCE_KEY:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
+    OCR_HTTP_ENDPOINT: process.env.OCR_HTTP_ENDPOINT,
+  };
+  const mockProvider = {
+    name: "mock",
+    extract: async () => {
+      throw new Error("mock provider should not be called");
+    },
+  };
+  const windowsProvider = {
+    name: "windows-ocr",
+    extract: async () => {
+      throw new Error("windows provider should not be called");
+    },
+  };
+  const httpProvider = {
+    name: "http-ocr",
+    canReadPdfDirectly: () => false,
+    extract: async () => {
+      throw new Error("http provider should not be called");
+    },
+  };
+  const azureProvider = {
+    name: "azure-document-intelligence",
+    extract: mockFn(async () => ({
+      providerName: "azure-document-intelligence",
+      rawOcrJson: { provider: "azure-document-intelligence" },
+      rows: [],
+      suggestedFields: [],
+    })),
+  };
+  const provider = new ConfiguredOcrProvider(
+    mockProvider,
+    windowsProvider,
+    httpProvider,
+    azureProvider,
+  );
+
+  process.env.OCR_PROVIDER = "auto";
+  delete process.env.OCR_FALLBACK_TO_MOCK;
+  delete process.env.OCR_HTTP_ENDPOINT;
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT =
+    "https://crowdlog-test.cognitiveservices.azure.com";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY = "azure-test-key";
+
+  try {
+    const result = await provider.extract(
+      extractionInput({ filePath: "C:/uploads/attendance.png", fields: [] }),
+    );
+
+    assert.equal(result.providerName, "azure-document-intelligence");
+    assert.equal(azureProvider.extract.calls.length, 1);
+  } finally {
+    restoreEnv(previousEnv);
+  }
+});
+
 test("configured OCR provider keeps fallback diagnostics when Azure fails in auto mode", async () => {
   const previousEnv = {
     OCR_PROVIDER: process.env.OCR_PROVIDER,

@@ -2,14 +2,20 @@
 
 import { useState } from "react";
 import type { AuthUser } from "@crowdlog/shared";
-import { AuthModal, type AuthDraft } from "../auth-modal";
+import {
+  AuthModal,
+  type AuthDraft,
+  type AuthStatusMessage,
+} from "../auth-modal";
 
 export function AuthPanel({
   currentUser,
   authDraft,
+  authStatus,
   isLoadingSession,
   isSigningIn,
   onAuthDraftChange,
+  onAuthStatusReset,
   onRequestOtp,
   onSignIn,
   onVerifyOtp,
@@ -17,9 +23,11 @@ export function AuthPanel({
 }: {
   currentUser: AuthUser | null;
   authDraft: AuthDraft;
+  authStatus: AuthStatusMessage;
   isLoadingSession: boolean;
   isSigningIn: boolean;
   onAuthDraftChange: (draft: AuthDraft) => void;
+  onAuthStatusReset: () => void;
   onRequestOtp: () => Promise<boolean>;
   onSignIn: () => Promise<boolean>;
   onVerifyOtp: (token: string) => Promise<boolean>;
@@ -68,7 +76,10 @@ export function AuthPanel({
       <button
         type="button"
         disabled={isSigningIn}
-        onClick={() => setIsAuthModalOpen(true)}
+        onClick={() => {
+          onAuthStatusReset();
+          setIsAuthModalOpen(true);
+        }}
         className="action-primary h-9 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
         Sign in
@@ -76,8 +87,10 @@ export function AuthPanel({
       {isAuthModalOpen ? (
         <AuthModal
           authDraft={authDraft}
+          authStatus={authStatus}
           isSigningIn={isSigningIn}
           onAuthDraftChange={onAuthDraftChange}
+          onAuthStatusReset={onAuthStatusReset}
           onClose={() => setIsAuthModalOpen(false)}
           onRequestOtp={onRequestOtp}
           onSignIn={onSignIn}

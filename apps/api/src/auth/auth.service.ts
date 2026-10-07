@@ -20,14 +20,13 @@ export class AuthService {
     const email = this.normalizeSignInEmail(dto.email);
     const name = dto.name?.trim() || null;
     const phone = this.normalizePhone(dto.phone);
-    const password = this.normalizePassword(dto.password);
 
     this.ensureCompleteSignUpProfile(name, phone);
 
-    const { data, error } = await this.supabaseAuth().auth.signUp({
+    const { error } = await this.supabaseAuth().auth.signInWithOtp({
       email,
-      password,
       options: {
+        shouldCreateUser: true,
         data: {
           name,
           phone,
@@ -39,15 +38,6 @@ export class AuthService {
       throw new BadRequestException(error.message);
     }
 
-    const identities = (data.user as { identities?: unknown[] } | null)
-      ?.identities;
-
-    if (Array.isArray(identities) && identities.length === 0) {
-      throw new BadRequestException(
-        "An account already exists for this email. Sign in with your password.",
-      );
-    }
-
     return { ok: true };
   }
 
@@ -56,16 +46,24 @@ export class AuthService {
     const token = dto.token.trim();
     const name = dto.name?.trim() || null;
     const phone = this.normalizePhone(dto.phone);
+    const password = this.normalizePassword(dto.password);
 
     const { data, error } = await this.supabaseAuth().auth.verifyOtp({
       email,
       token,
-      type: "signup",
+      type: "email",
     });
 
-    if (error || !data.user?.email) {
+    if (error || !data.user?.email || !data.session) {
       throw new BadRequestException("Invalid or expired verification code.");
     }
+
+    await this.updateSupabasePasswordForSession({
+      session: data.session,
+      password,
+      name,
+      phone,
+    });
 
     return this.createSessionForProfile({
       email: this.normalizeSignInEmail(data.user.email),
@@ -330,6 +328,42 @@ export class AuthService {
     return password;
   }
 
+  private async updateSupabasePasswordForSession({
+    session,
+    password,
+    name,
+    phone,
+  }: {
+    session: { access_token: string; refresh_token: string };
+    password: string;
+    name: string | null;
+    phone: string | null;
+  }) {
+    const client = this.supabaseAuth();
+    const { error: sessionError } = await client.auth.setSession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+    });
+
+    if (sessionError) {
+      throw new BadRequestException("Could not finish account setup.");
+    }
+
+    const { error } = await client.auth.updateUser({
+      password,
+      data: {
+        name,
+        phone,
+      },
+    });
+
+    await client.auth.signOut();
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
   private ensureCompleteSignUpProfile(
     name: string | null,
     phone: string | null,
@@ -350,6 +384,12 @@ export class AuthService {
       return this.supabaseClient;
     }
 
+    this.supabaseClient = this.createSupabaseClient();
+
+    return this.supabaseClient;
+  }
+
+  private createSupabaseClient() {
     const supabaseUrl = process.env.SUPABASE_URL?.trim();
     const supabaseKey =
       process.env.SUPABASE_ANON_KEY?.trim() ||
@@ -362,13 +402,11 @@ export class AuthService {
       );
     }
 
-    this.supabaseClient = createClient(supabaseUrl, supabaseKey, {
+    return createClient(supabaseUrl, supabaseKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
       },
     });
-
-    return this.supabaseClient;
   }
 }

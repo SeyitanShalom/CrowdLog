@@ -123,21 +123,7 @@ export class ConfiguredOcrProvider implements OcrProvider {
 
     const fallbackFailures: OcrFallbackFailure[] = [];
 
-    if (this.canUseWindowsOcr(input)) {
-      try {
-        return await this.windowsOcrProvider.extract(input);
-      } catch (error) {
-        if (mode === "windows" || process.env.OCR_FALLBACK_TO_MOCK === "false") {
-          throw error;
-        }
-
-        fallbackFailures.push(
-          this.fallbackFailure(this.windowsOcrProvider.name, error),
-        );
-      }
-    }
-
-    if (this.canUseAzureOcr(input)) {
+    if (mode !== "windows" && this.canUseAzureOcr(input)) {
       try {
         return this.withFallbackDiagnostics(
           await this.azureProvider().extract(input),
@@ -154,7 +140,7 @@ export class ConfiguredOcrProvider implements OcrProvider {
       }
     }
 
-    if (this.canUseGoogleOcr(input)) {
+    if (mode !== "windows" && this.canUseGoogleOcr(input)) {
       try {
         return this.withFallbackDiagnostics(
           await this.googleProvider().extract(input),
@@ -171,7 +157,7 @@ export class ConfiguredOcrProvider implements OcrProvider {
       }
     }
 
-    if (this.canUseAwsTextractOcr(input)) {
+    if (mode !== "windows" && this.canUseAwsTextractOcr(input)) {
       try {
         return this.withFallbackDiagnostics(
           await this.awsTextractProvider().extract(input),
@@ -188,7 +174,7 @@ export class ConfiguredOcrProvider implements OcrProvider {
       }
     }
 
-    if (this.canUseGoogleVisionOcr(input)) {
+    if (mode !== "windows" && this.canUseGoogleVisionOcr(input)) {
       try {
         return this.withFallbackDiagnostics(
           await this.googleVisionProvider().extract(input),
@@ -205,7 +191,7 @@ export class ConfiguredOcrProvider implements OcrProvider {
       }
     }
 
-    if (this.canUseHttpOcr()) {
+    if (mode !== "windows" && this.canUseHttpOcr()) {
       try {
         return this.withFallbackDiagnostics(
           await this.httpOcrProvider.extract(input),
@@ -218,6 +204,20 @@ export class ConfiguredOcrProvider implements OcrProvider {
 
         fallbackFailures.push(
           this.fallbackFailure(this.httpOcrProvider.name, error),
+        );
+      }
+    }
+
+    if (this.canUseWindowsOcr(input)) {
+      try {
+        return await this.windowsOcrProvider.extract(input);
+      } catch (error) {
+        if (mode === "windows" || process.env.OCR_FALLBACK_TO_MOCK === "false") {
+          throw error;
+        }
+
+        fallbackFailures.push(
+          this.fallbackFailure(this.windowsOcrProvider.name, error),
         );
       }
     }

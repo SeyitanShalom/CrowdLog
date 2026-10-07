@@ -157,15 +157,15 @@ test("sign-in rejects invalid email addresses before creating a user", async () 
   assert.equal(prisma.user.upsert.calls.length, 0);
 });
 
-test("requestEmailOtp starts sign-up with a password and profile", async () => {
+test("requestEmailOtp sends a sign-up OTP without blocking existing app profiles", async () => {
   const service = new AuthService({});
-  const signUp = mockFn(async () => ({
-    data: { user: { identities: [{ id: "identity_owner" }] } },
+  const signInWithOtp = mockFn(async () => ({
+    data: {},
     error: null,
   }));
   service.supabaseClient = {
     auth: {
-      signUp,
+      signInWithOtp,
     },
   };
 
@@ -174,14 +174,13 @@ test("requestEmailOtp starts sign-up with a password and profile", async () => {
     mode: "sign-up",
     name: "Owner User",
     phone: "+2348012345678",
-    password: "secret1",
   });
 
   assert.deepEqual(result, { ok: true });
-  assert.deepEqual(signUp.calls[0][0], {
+  assert.deepEqual(signInWithOtp.calls[0][0], {
     email: "owner@example.com",
-    password: "secret1",
     options: {
+      shouldCreateUser: true,
       data: {
         name: "Owner User",
         phone: "+2348012345678",
@@ -218,12 +217,24 @@ test("verifyEmailOtp creates an app session after Supabase verifies the code", a
   };
   const service = new AuthService(prisma);
   const verifyOtp = mockFn(async () => ({
-    data: { user: { email: "OWNER@Example.COM" } },
+    data: {
+      user: { email: "OWNER@Example.COM" },
+      session: {
+        access_token: "access_token",
+        refresh_token: "refresh_token",
+      },
+    },
     error: null,
   }));
+  const setSession = mockFn(async () => ({ error: null }));
+  const updateUser = mockFn(async () => ({ data: {}, error: null }));
+  const signOut = mockFn(async () => ({ error: null }));
   service.supabaseClient = {
     auth: {
       verifyOtp,
+      setSession,
+      updateUser,
+      signOut,
     },
   };
 
@@ -232,13 +243,26 @@ test("verifyEmailOtp creates an app session after Supabase verifies the code", a
     token: "123456",
     name: "Owner User",
     phone: "+2348012345678",
+    password: "secret1",
   });
 
   assert.deepEqual(verifyOtp.calls[0][0], {
     email: "owner@example.com",
     token: "123456",
-    type: "signup",
+    type: "email",
   });
+  assert.deepEqual(setSession.calls[0][0], {
+    access_token: "access_token",
+    refresh_token: "refresh_token",
+  });
+  assert.deepEqual(updateUser.calls[0][0], {
+    password: "secret1",
+    data: {
+      name: "Owner User",
+      phone: "+2348012345678",
+    },
+  });
+  assert.equal(signOut.calls.length, 1);
   assert.deepEqual(prisma.user.upsert.calls[0][0].where, {
     email: "owner@example.com",
   });

@@ -865,11 +865,11 @@ OCR_HTTP_INCLUDE_FILE="true"
 OCR_HTTP_DIRECT_PDF="false"
 ```
 
-- `auto` uses local Windows OCR for uploaded image files on Windows, then tries
-  Azure Document Intelligence when configured, then Google Document AI when
-  configured, then AWS Textract when configured, then Google Vision for image
-  inputs or rendered PDF pages when configured, then falls back to the
-  configured HTTP OCR endpoint when available, then mock rows.
+- `auto` tries configured higher-accuracy providers first: Azure Document
+  Intelligence, Google Document AI, AWS Textract, Google Vision for image inputs
+  or rendered PDF pages, then the configured HTTP OCR endpoint. If none of
+  those can run, it falls back to local Windows OCR for uploaded image files on
+  Windows, then mock rows.
 - `mock` always generates mock rows.
 - `windows` requires local Windows OCR for uploaded image files.
 - `azure` sends uploaded document bytes to Azure Document Intelligence.

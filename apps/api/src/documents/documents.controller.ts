@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -51,7 +52,9 @@ export class DocumentsController {
         }
 
         callback(
-          new Error("Upload a PDF, JPEG, PNG, or WebP attendance sheet."),
+          new BadRequestException(
+            "Upload a PDF, JPEG, PNG, or WebP attendance sheet.",
+          ),
           false,
         );
       },
@@ -80,7 +83,9 @@ export class DocumentsController {
         }
 
         callback(
-          new Error("Upload a PDF, JPEG, PNG, or WebP attendance sheet."),
+          new BadRequestException(
+            "Upload a PDF, JPEG, PNG, or WebP attendance sheet.",
+          ),
           false,
         );
       },

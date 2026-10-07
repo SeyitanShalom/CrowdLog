@@ -64,11 +64,11 @@ export type SignInPayload = {
 
 export type RequestEmailOtpPayload = AuthProfilePayload & {
   mode: "sign-up";
-  password: string;
 };
 
 export type VerifyEmailOtpPayload = AuthProfilePayload & {
   token: string;
+  password: string;
 };
 
 export async function getCurrentSession() {

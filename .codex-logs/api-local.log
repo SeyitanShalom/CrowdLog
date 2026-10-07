@@ -1,0 +1,51 @@
+Starting CrowdLog API...
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +52ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mPrismaModule dependencies initialized[39m[38;5;3m +3ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mInvitationsModule dependencies initialized[39m[38;5;3m +4ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mStorageModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +13ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mOcrModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mDocumentsModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mEventsModule dependencies initialized[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mRecordsModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/auth}:[39m[38;5;3m +121ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/me, GET} route[39m[38;5;3m +8ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/sign-in, POST} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/otp/request, POST} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/otp/verify, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/sign-out, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mOcrHealthController {/}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health/ocr, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mEventsController {/}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events, POST} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId, DELETE} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId, PATCH} route[39m[38;5;3m +3ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/members, POST} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/members/:memberId, DELETE} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/members/:memberId, PATCH} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/templates, POST} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/templates/:templateId/fields, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mRecordsController {/}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/records, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/records/analytics, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/records/export, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/records/export.xlsx, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/records, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/mock-extract, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/documents/:documentId/mock-extract, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/documents/:documentId/extract, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/records/:recordId, PATCH} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/records/:recordId/approve, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/records/:recordId/reject, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDocumentsController {/}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/documents, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/events/:eventId/documents, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/documents/:documentId, PUT} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/documents/:documentId, DELETE} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/uploads/:fileName, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 14808  - [39m10/07/2026, 5:51:03 PM [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +3ms[39m
+CrowdLog API listening on http://localhost:4000

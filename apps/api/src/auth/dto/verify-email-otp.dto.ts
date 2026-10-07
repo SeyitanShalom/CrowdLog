@@ -4,6 +4,7 @@ import {
   IsString,
   Matches,
   MaxLength,
+  MinLength,
 } from "class-validator";
 
 export class VerifyEmailOtpDto {
@@ -12,8 +13,8 @@ export class VerifyEmailOtpDto {
   email: string;
 
   @IsString()
-  @Matches(/^\d{6}$/, {
-    message: "token must be a 6 digit verification code",
+  @Matches(/^\d{6,8}$/, {
+    message: "token must be a 6 to 8 digit verification code",
   })
   token: string;
 
@@ -29,4 +30,9 @@ export class VerifyEmailOtpDto {
     message: "phone must be a valid phone number",
   })
   phone?: string;
+
+  @IsString()
+  @MinLength(6)
+  @MaxLength(72)
+  password: string;
 }
