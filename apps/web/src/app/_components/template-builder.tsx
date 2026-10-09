@@ -1312,7 +1312,9 @@ export function TemplateBuilder() {
     } catch (error) {
       setReviewStatus({
         tone: "error",
-        text: `Could not create mock extracted rows. ${getErrorMessage(error)}`,
+        text: isExtractingSelectedDocument
+          ? `Could not extract selected file. ${getErrorMessage(error)}`
+          : `Could not create mock extracted rows. ${getErrorMessage(error)}`,
       });
     } finally {
       setIsMockExtracting(false);

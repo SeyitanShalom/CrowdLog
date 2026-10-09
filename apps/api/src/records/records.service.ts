@@ -1,4 +1,10 @@
-import { Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import {
   AttendanceDocumentStatus,
   AttendanceRecordStatus,
@@ -395,7 +401,9 @@ export class RecordsService {
       );
     } catch (error) {
       await this.recordExtractionFailure(document, extractionOptions, error);
-      throw error;
+      throw new ServiceUnavailableException(
+        `Could not extract selected file. ${this.sanitizedErrorMessage(error)}`,
+      );
     } finally {
       await this.uploadStorage.cleanupTempFile(localFilePath);
     }
