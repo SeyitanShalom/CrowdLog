@@ -31,7 +31,6 @@ import {
   deleteAttendanceDocument,
   deleteEvent,
   extractDocument,
-  exportEventRecordsXlsx,
   getCurrentSession,
   getEventRecordAnalytics,
   listDocuments,
@@ -71,7 +70,9 @@ import type {
   StatusMessage,
 } from "./template-builder/types";
 import {
+  createDataOnlyXlsxBlob,
   downloadBlob,
+  toFileSlug,
   valueToString,
 } from "./template-builder/review-utils";
 import { WebsiteHelpDialog } from "./help-dialog";
@@ -1407,7 +1408,7 @@ export function TemplateBuilder() {
     }
   }
 
-  async function exportEventRecordsExcel() {
+  function exportEventRecordsExcel() {
     if (!reviewEvent) {
       setReviewStatus({ tone: "error", text: "Select a saved event first." });
       return;
@@ -1417,9 +1418,10 @@ export function TemplateBuilder() {
     setReviewStatus({ tone: "info", text: "Preparing Excel export." });
 
     try {
-      const exportFile = await exportEventRecordsXlsx(reviewEvent.id);
+      const blob = createDataOnlyXlsxBlob(reviewEvent.template.fields, records);
+      const fileName = `${toFileSlug(reviewEvent.title)}-attendance.xlsx`;
 
-      downloadBlob(exportFile.fileName, exportFile.blob);
+      downloadBlob(fileName, blob);
       setReviewStatus({
         tone: "success",
         text: "Excel export downloaded.",
