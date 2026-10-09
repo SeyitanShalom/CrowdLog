@@ -26,6 +26,11 @@ import {
 } from "./event-response.mapper";
 import { toPrismaFieldType } from "./field-type.mapper";
 
+const EVENT_UPDATE_TRANSACTION_OPTIONS = {
+  maxWait: 10000,
+  timeout: 60000,
+};
+
 @Injectable()
 export class EventsService {
   constructor(
@@ -157,63 +162,66 @@ export class EventsService {
     }
 
     try {
-      const updatedEvent = await this.prisma.$transaction(async (tx) => {
-        const eventData: Prisma.EventUpdateInput = {};
+      const updatedEvent = await this.prisma.$transaction(
+        async (tx) => {
+          const eventData: Prisma.EventUpdateInput = {};
 
-        if (dto.title !== undefined) {
-          eventData.title = dto.title;
-        }
+          if (dto.title !== undefined) {
+            eventData.title = dto.title;
+          }
 
-        if ("description" in dto) {
-          eventData.description = dto.description ?? null;
-        }
+          if ("description" in dto) {
+            eventData.description = dto.description ?? null;
+          }
 
-        if ("eventDate" in dto) {
-          eventData.eventDate = dto.eventDate ? new Date(dto.eventDate) : null;
-        }
+          if ("eventDate" in dto) {
+            eventData.eventDate = dto.eventDate ? new Date(dto.eventDate) : null;
+          }
 
-        if (Object.keys(eventData).length > 0) {
-          await tx.event.update({
-            where: { id: eventId },
-            data: eventData,
-          });
-        }
-
-        const template =
-          event.templates.find((candidate) => candidate.isDefault) ??
-          event.templates[0];
-
-        if (template) {
-          if (dto.templateName !== undefined) {
-            await tx.attendanceTemplate.update({
-              where: { id: template.id },
-              data: { name: dto.templateName },
+          if (Object.keys(eventData).length > 0) {
+            await tx.event.update({
+              where: { id: eventId },
+              data: eventData,
             });
           }
 
-          if (dto.fields) {
-            await this.replaceTemplateFields(tx, template, dto.fields);
-          }
-        } else if (dto.templateName !== undefined || dto.fields) {
-          await tx.attendanceTemplate.create({
-            data: {
-              eventId,
-              name: dto.templateName ?? "Default attendance template",
-              isDefault: true,
-              fields: {
-                create: (dto.fields ?? []).map((field, index) =>
-                  this.toTemplateFieldCreateInput(field, index),
-                ),
-              },
-            },
-          });
-        }
+          const template =
+            event.templates.find((candidate) => candidate.isDefault) ??
+            event.templates[0];
 
-        return tx.event.findUniqueOrThrow({
-          where: { id: eventId },
-          include: getEventInclude(),
-        });
-      });
+          if (template) {
+            if (dto.templateName !== undefined) {
+              await tx.attendanceTemplate.update({
+                where: { id: template.id },
+                data: { name: dto.templateName },
+              });
+            }
+
+            if (dto.fields) {
+              await this.replaceTemplateFields(tx, template, dto.fields);
+            }
+          } else if (dto.templateName !== undefined || dto.fields) {
+            await tx.attendanceTemplate.create({
+              data: {
+                eventId,
+                name: dto.templateName ?? "Default attendance template",
+                isDefault: true,
+                fields: {
+                  create: (dto.fields ?? []).map((field, index) =>
+                    this.toTemplateFieldCreateInput(field, index),
+                  ),
+                },
+              },
+            });
+          }
+
+          return tx.event.findUniqueOrThrow({
+            where: { id: eventId },
+            include: getEventInclude(),
+          });
+        },
+        EVENT_UPDATE_TRANSACTION_OPTIONS,
+      );
 
       return toEventResponse(updatedEvent);
     } catch (error) {
@@ -556,40 +564,37 @@ export class EventsService {
       },
     });
 
-    await Promise.all(
-      fieldTargets.map(({ field, existingField }, index) => {
-        if (!existingField) {
-          return Promise.resolve();
-        }
+    for (const [index, { field, existingField }] of fieldTargets.entries()) {
+      if (!existingField) {
+        continue;
+      }
 
-        if (existingField.key === field.key) {
-          return Promise.resolve();
-        }
+      if (existingField.key === field.key) {
+        continue;
+      }
 
-        return tx.templateField.update({
+      await tx.templateField.update({
+        where: { id: existingField.id },
+        data: { key: `__crowdlog_edit_${index}_${existingField.id}` },
+      });
+    }
+
+    for (const [index, { field, existingField }] of fieldTargets.entries()) {
+      if (existingField) {
+        await tx.templateField.update({
           where: { id: existingField.id },
-          data: { key: `__crowdlog_edit_${index}_${existingField.id}` },
+          data: this.toTemplateFieldUpdateInput(field, index),
         });
-      }),
-    );
+        continue;
+      }
 
-    await Promise.all(
-      fieldTargets.map(({ field, existingField }, index) => {
-        if (existingField) {
-          return tx.templateField.update({
-            where: { id: existingField.id },
-            data: this.toTemplateFieldUpdateInput(field, index),
-          });
-        }
-
-        return tx.templateField.create({
-          data: {
-            ...this.toTemplateFieldCreateInput(field, index),
-            templateId: template.id,
-          },
-        });
-      }),
-    );
+      await tx.templateField.create({
+        data: {
+          ...this.toTemplateFieldCreateInput(field, index),
+          templateId: template.id,
+        },
+      });
+    }
 
     await this.migrateRecordDataKeys(
       tx,
@@ -660,49 +665,45 @@ export class EventsService {
       },
     });
 
-    await Promise.all(
-      records.map((record) => {
-        const currentData = this.jsonRecord(record.dataJson);
-        const nextData: Record<string, string | number | boolean | null> = {
-          ...currentData,
-        };
-        let didChange = false;
+    for (const record of records) {
+      const currentData = this.jsonRecord(record.dataJson);
+      const nextData: Record<string, string | number | boolean | null> = {
+        ...currentData,
+      };
+      let didChange = false;
 
-        for (const key of removedFieldKeys) {
-          if (Object.prototype.hasOwnProperty.call(nextData, key)) {
-            delete nextData[key];
-            didChange = true;
-          }
+      for (const key of removedFieldKeys) {
+        if (Object.prototype.hasOwnProperty.call(nextData, key)) {
+          delete nextData[key];
+          didChange = true;
         }
+      }
 
-        for (const change of keyChanges) {
-          if (Object.prototype.hasOwnProperty.call(nextData, change.oldKey)) {
-            delete nextData[change.oldKey];
-            didChange = true;
-          }
+      for (const change of keyChanges) {
+        if (Object.prototype.hasOwnProperty.call(nextData, change.oldKey)) {
+          delete nextData[change.oldKey];
+          didChange = true;
         }
+      }
 
-        for (const change of keyChanges) {
-          if (
-            Object.prototype.hasOwnProperty.call(currentData, change.oldKey)
-          ) {
-            nextData[change.newKey] = currentData[change.oldKey];
-            didChange = true;
-          }
+      for (const change of keyChanges) {
+        if (Object.prototype.hasOwnProperty.call(currentData, change.oldKey)) {
+          nextData[change.newKey] = currentData[change.oldKey];
+          didChange = true;
         }
+      }
 
-        if (!didChange) {
-          return Promise.resolve();
-        }
+      if (!didChange) {
+        continue;
+      }
 
-        return tx.attendanceRecord.update({
-          where: { id: record.id },
-          data: {
-            dataJson: nextData as Prisma.InputJsonObject,
-          },
-        });
-      }),
-    );
+      await tx.attendanceRecord.update({
+        where: { id: record.id },
+        data: {
+          dataJson: nextData as Prisma.InputJsonObject,
+        },
+      });
+    }
   }
 
   private rethrowEventUpdateError(error: unknown): never {
