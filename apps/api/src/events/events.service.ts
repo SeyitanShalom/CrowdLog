@@ -523,9 +523,11 @@ export class EventsService {
       .map((target) => target.existingField?.id)
       .filter((id): id is string => Boolean(id));
     const retainedFieldIdSet = new Set(retainedFieldIds);
-    const removedFieldKeys = template.fields
-      .filter((field) => !retainedFieldIdSet.has(field.id))
-      .map((field) => field.key);
+    const removedFields = template.fields.filter(
+      (field) => !retainedFieldIdSet.has(field.id),
+    );
+    const removedFieldIds = removedFields.map((field) => field.id);
+    const removedFieldKeys = removedFields.map((field) => field.key);
     const keyChanges = fieldTargets
       .map(({ field, existingField }) =>
         existingField && existingField.key !== field.key
@@ -536,6 +538,14 @@ export class EventsService {
         (change): change is { oldKey: string; newKey: string } =>
           change !== null,
       );
+
+    if (removedFieldIds.length > 0) {
+      await tx.attendanceRecordValue.deleteMany({
+        where: {
+          fieldId: { in: removedFieldIds },
+        },
+      });
+    }
 
     await tx.templateField.deleteMany({
       where: {

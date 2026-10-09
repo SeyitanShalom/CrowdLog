@@ -802,6 +802,9 @@ test("owners can update an event and its default template fields", async () => {
       update: mockFn(async () => null),
       create: mockFn(async () => null),
     },
+    attendanceRecordValue: {
+      deleteMany: mockFn(async () => ({ count: 1 })),
+    },
     attendanceRecord: {
       findMany: mockFn(async () => [
         {
@@ -867,6 +870,11 @@ test("owners can update an event and its default template fields", async () => {
       id: { notIn: ["field_name"] },
     },
   });
+  assert.deepEqual(prisma.attendanceRecordValue.deleteMany.calls[0][0], {
+    where: {
+      fieldId: { in: ["field_email"] },
+    },
+  });
   assert.match(
     prisma.templateField.update.calls[0][0].data.key,
     /^__crowdlog_edit_0_field_name$/,
@@ -898,6 +906,106 @@ test("owners can update an event and its default template fields", async () => {
   assert.deepEqual(
     response.template.fields.map((field) => field.key),
     ["full_name", "phone"],
+  );
+});
+
+test("owners can remove OCR-backed template fields", async () => {
+  const existingEvent = eventResponse({
+    templates: [
+      {
+        id: "template_1",
+        eventId: "event_1",
+        name: "Default attendance template",
+        isDefault: true,
+        createdAt: now,
+        updatedAt: now,
+        fields: [templateField(), emailTemplateField()],
+      },
+    ],
+  });
+  const updatedEvent = eventResponse({
+    templates: [
+      {
+        id: "template_1",
+        eventId: "event_1",
+        name: "Default attendance template",
+        isDefault: true,
+        createdAt: now,
+        updatedAt: now,
+        fields: [templateField()],
+      },
+    ],
+  });
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => existingEvent),
+      findUniqueOrThrow: mockFn(async () => updatedEvent),
+    },
+    templateField: {
+      deleteMany: mockFn(async () => ({ count: 1 })),
+      update: mockFn(async () => null),
+      create: mockFn(async () => null),
+    },
+    attendanceRecordValue: {
+      deleteMany: mockFn(async () => ({ count: 4 })),
+    },
+    attendanceRecord: {
+      findMany: mockFn(async () => [
+        {
+          id: "record_1",
+          dataJson: {
+            name: "Ada",
+            email: "ada@example.com",
+          },
+        },
+      ]),
+      update: mockFn(async () => null),
+    },
+    $transaction: mockFn(async (callback) => callback(prisma)),
+  };
+  const service = new EventsService(prisma);
+
+  const response = await service.updateEvent(
+    "event_1",
+    {
+      fields: [
+        {
+          id: "field_name",
+          label: "Name",
+          key: "name",
+          type: "text",
+          required: true,
+          aliases: [],
+          options: [],
+        },
+      ],
+    },
+    "user_owner",
+  );
+
+  assert.deepEqual(prisma.attendanceRecordValue.deleteMany.calls[0][0], {
+    where: {
+      fieldId: { in: ["field_email"] },
+    },
+  });
+  assert.deepEqual(prisma.templateField.deleteMany.calls[0][0], {
+    where: {
+      templateId: "template_1",
+      id: { notIn: ["field_name"] },
+    },
+  });
+  assert.deepEqual(prisma.attendanceRecord.update.calls[0][0], {
+    where: { id: "record_1" },
+    data: {
+      dataJson: {
+        name: "Ada",
+      },
+    },
+  });
+  assert.equal(prisma.templateField.create.calls.length, 0);
+  assert.deepEqual(
+    response.template.fields.map((field) => field.key),
+    ["name"],
   );
 });
 
