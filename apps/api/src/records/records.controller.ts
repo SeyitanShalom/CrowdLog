@@ -68,11 +68,15 @@ export class RecordsController {
   async exportRecordsXlsx(
     @Param("eventId") eventId: string,
     @CurrentUser() user: AuthenticatedUser,
+    @Res({ passthrough: true })
+    response: { setHeader: (name: string, value: string) => void },
   ) {
     const exportFile = await this.recordsService.exportRecordsXlsx(
       eventId,
       user.id,
     );
+
+    response.setHeader("Cache-Control", "no-store");
 
     return new StreamableFile(Readable.from([exportFile.content]), {
       type: getXlsxContentType(),

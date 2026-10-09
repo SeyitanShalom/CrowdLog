@@ -208,7 +208,7 @@ export async function exportEventRecordsCsv(eventId: string) {
 
 export async function exportEventRecordsXlsx(eventId: string) {
   return exportEventRecordsFile({
-    path: `/events/${eventId}/records/export.xlsx`,
+    path: `/events/${eventId}/records/export.xlsx?scope=data-only&v=2`,
     fallbackFileName: `crowdlog-event-${eventId}.xlsx`,
     failureLabel: "Excel export",
     fallbackContentType:
@@ -231,6 +231,7 @@ async function exportEventRecordsFile({
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
+      cache: "no-store",
       credentials: "include",
     });
   } catch {
