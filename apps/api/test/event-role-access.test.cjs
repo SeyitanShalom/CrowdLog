@@ -1389,9 +1389,11 @@ test("reviewers can export full event records as an Excel workbook", async () =>
   assert.equal(exportFile.content.subarray(0, 2).toString("utf8"), "PK");
   assert.ok(entries.has("[Content_Types].xml"));
   assert.ok(entries.has("xl/workbook.xml"));
-  assert.ok(worksheet.includes('<dimension ref="A1:G2"/>'));
+  assert.ok(worksheet.includes('<dimension ref="A1:B2"/>'));
   assert.ok(worksheet.includes("Ada &amp; Co"));
-  assert.ok(worksheet.includes("Needs review"));
+  assert.ok(worksheet.includes("ada@example.com"));
+  assert.equal(worksheet.includes("Needs review"), false);
+  assert.equal(worksheet.includes("week 1.csv"), false);
   assert.equal(prisma.attendanceRecord.findMany.calls.length, 1);
 });
 

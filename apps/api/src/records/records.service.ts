@@ -261,7 +261,7 @@ export class RecordsService {
 
   async exportRecordsXlsx(eventId: string, userId: string) {
     const { template, records } = await this.getEventExportData(eventId, userId);
-    const rows = this.toExportRows(template.eventTitle, template.fields, records);
+    const rows = this.toDataOnlyExportRows(template.fields, records);
 
     return {
       fileName: `${toFileSlug(template.eventTitle)}-attendance.xlsx`,
@@ -1621,6 +1621,20 @@ export class RecordsService {
         record.document?.fileName ?? "",
         ...fields.map((field) => this.valueToString(data[field.key])),
       ];
+    });
+
+    return [headers, ...rows];
+  }
+
+  private toDataOnlyExportRows(
+    fields: TemplateField[],
+    records: ExportRecordWithDocument[],
+  ) {
+    const headers = fields.map((field) => field.label);
+    const rows = records.map((record) => {
+      const data = this.jsonRecord(record.dataJson);
+
+      return fields.map((field) => this.valueToString(data[field.key]));
     });
 
     return [headers, ...rows];
