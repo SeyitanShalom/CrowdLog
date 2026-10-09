@@ -901,6 +901,108 @@ test("owners can update an event and its default template fields", async () => {
   );
 });
 
+test("event template updates match stale field ids by key", async () => {
+  const existingEvent = eventResponse({
+    templates: [
+      {
+        id: "template_1",
+        eventId: "event_1",
+        name: "Default attendance template",
+        isDefault: true,
+        createdAt: now,
+        updatedAt: now,
+        fields: [templateField(), emailTemplateField()],
+      },
+    ],
+  });
+  const updatedEvent = eventResponse({
+    templates: [
+      {
+        id: "template_1",
+        eventId: "event_1",
+        name: "Default attendance template",
+        isDefault: true,
+        createdAt: now,
+        updatedAt: now,
+        fields: [
+          {
+            ...templateField(),
+            label: "Full Name",
+            aliases: ["Name"],
+          },
+          emailTemplateField(),
+        ],
+      },
+    ],
+  });
+  const prisma = {
+    event: {
+      findUnique: mockFn(async () => existingEvent),
+      findUniqueOrThrow: mockFn(async () => updatedEvent),
+    },
+    templateField: {
+      deleteMany: mockFn(async () => ({ count: 0 })),
+      update: mockFn(async () => null),
+      create: mockFn(async () => null),
+    },
+    attendanceRecord: {
+      findMany: mockFn(async () => []),
+      update: mockFn(async () => null),
+    },
+    $transaction: mockFn(async (callback) => callback(prisma)),
+  };
+  const service = new EventsService(prisma);
+
+  const response = await service.updateEvent(
+    "event_1",
+    {
+      fields: [
+        {
+          id: "field_client_stale",
+          label: "Full Name",
+          key: "name",
+          type: "text",
+          required: true,
+          aliases: ["Name"],
+          options: [],
+        },
+        {
+          id: "field_email",
+          label: "Email",
+          key: "email",
+          type: "email",
+          required: false,
+          aliases: [],
+          options: [],
+        },
+      ],
+    },
+    "user_owner",
+  );
+
+  assert.deepEqual(prisma.templateField.deleteMany.calls[0][0], {
+    where: {
+      templateId: "template_1",
+      id: { notIn: ["field_name", "field_email"] },
+    },
+  });
+  assert.deepEqual(prisma.templateField.update.calls[0][0], {
+    where: { id: "field_name" },
+    data: {
+      label: "Full Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+      sortOrder: 1,
+      aliases: ["Name"],
+      options: [],
+    },
+  });
+  assert.equal(prisma.templateField.create.calls.length, 0);
+  assert.equal(prisma.attendanceRecord.findMany.calls.length, 0);
+  assert.equal(response.template.fields[0].label, "Full Name");
+});
+
 test("reviewers cannot update event templates", async () => {
   const prisma = {
     event: {

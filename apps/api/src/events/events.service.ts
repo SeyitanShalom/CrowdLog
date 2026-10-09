@@ -156,65 +156,69 @@ export class EventsService {
       this.ensureUniqueFieldKeys(dto.fields);
     }
 
-    const updatedEvent = await this.prisma.$transaction(async (tx) => {
-      const eventData: Prisma.EventUpdateInput = {};
+    try {
+      const updatedEvent = await this.prisma.$transaction(async (tx) => {
+        const eventData: Prisma.EventUpdateInput = {};
 
-      if (dto.title !== undefined) {
-        eventData.title = dto.title;
-      }
+        if (dto.title !== undefined) {
+          eventData.title = dto.title;
+        }
 
-      if ("description" in dto) {
-        eventData.description = dto.description ?? null;
-      }
+        if ("description" in dto) {
+          eventData.description = dto.description ?? null;
+        }
 
-      if ("eventDate" in dto) {
-        eventData.eventDate = dto.eventDate ? new Date(dto.eventDate) : null;
-      }
+        if ("eventDate" in dto) {
+          eventData.eventDate = dto.eventDate ? new Date(dto.eventDate) : null;
+        }
 
-      if (Object.keys(eventData).length > 0) {
-        await tx.event.update({
-          where: { id: eventId },
-          data: eventData,
-        });
-      }
-
-      const template =
-        event.templates.find((candidate) => candidate.isDefault) ??
-        event.templates[0];
-
-      if (template) {
-        if (dto.templateName !== undefined) {
-          await tx.attendanceTemplate.update({
-            where: { id: template.id },
-            data: { name: dto.templateName },
+        if (Object.keys(eventData).length > 0) {
+          await tx.event.update({
+            where: { id: eventId },
+            data: eventData,
           });
         }
 
-        if (dto.fields) {
-          await this.replaceTemplateFields(tx, template, dto.fields);
-        }
-      } else if (dto.templateName !== undefined || dto.fields) {
-        await tx.attendanceTemplate.create({
-          data: {
-            eventId,
-            name: dto.templateName ?? "Default attendance template",
-            isDefault: true,
-            fields: {
-              create: (dto.fields ?? []).map((field, index) =>
-                this.toTemplateFieldCreateInput(field, index),
-              ),
+        const template =
+          event.templates.find((candidate) => candidate.isDefault) ??
+          event.templates[0];
+
+        if (template) {
+          if (dto.templateName !== undefined) {
+            await tx.attendanceTemplate.update({
+              where: { id: template.id },
+              data: { name: dto.templateName },
+            });
+          }
+
+          if (dto.fields) {
+            await this.replaceTemplateFields(tx, template, dto.fields);
+          }
+        } else if (dto.templateName !== undefined || dto.fields) {
+          await tx.attendanceTemplate.create({
+            data: {
+              eventId,
+              name: dto.templateName ?? "Default attendance template",
+              isDefault: true,
+              fields: {
+                create: (dto.fields ?? []).map((field, index) =>
+                  this.toTemplateFieldCreateInput(field, index),
+                ),
+              },
             },
-          },
+          });
+        }
+
+        return tx.event.findUniqueOrThrow({
+          where: { id: eventId },
+          include: getEventInclude(),
         });
-      }
-
-      return tx.event.findUniqueOrThrow({
-        where: { id: eventId },
-        include: getEventInclude(),
       });
-    });
 
-    return toEventResponse(updatedEvent);
+      return toEventResponse(updatedEvent);
+    } catch (error) {
+      this.rethrowEventUpdateError(error);
+    }
   }
 
   async addReviewer(
@@ -511,25 +515,23 @@ export class EventsService {
     },
     fields: UpdateTemplateFieldInputDto[],
   ) {
-    const existingFieldsById = new Map(
-      template.fields.map((field) => [field.id, field]),
+    const fieldTargets = this.resolveTemplateFieldTargets(
+      template.fields,
+      fields,
     );
-    const retainedFieldIds = fields
-      .map((field) => field.id)
-      .filter((id): id is string => Boolean(id && existingFieldsById.has(id)));
+    const retainedFieldIds = fieldTargets
+      .map((target) => target.existingField?.id)
+      .filter((id): id is string => Boolean(id));
     const retainedFieldIdSet = new Set(retainedFieldIds);
     const removedFieldKeys = template.fields
       .filter((field) => !retainedFieldIdSet.has(field.id))
       .map((field) => field.key);
-    const keyChanges = fields
-      .filter((field) => field.id && existingFieldsById.has(field.id))
-      .map((field) => {
-        const existingField = existingFieldsById.get(field.id ?? "");
-
-        return existingField && existingField.key !== field.key
+    const keyChanges = fieldTargets
+      .map(({ field, existingField }) =>
+        existingField && existingField.key !== field.key
           ? { oldKey: existingField.key, newKey: field.key }
-          : null;
-      })
+          : null,
+      )
       .filter(
         (change): change is { oldKey: string; newKey: string } =>
           change !== null,
@@ -545,33 +547,27 @@ export class EventsService {
     });
 
     await Promise.all(
-      fields.map((field, index) => {
-        const fieldId = field.id;
-
-        if (!fieldId || !existingFieldsById.has(fieldId)) {
+      fieldTargets.map(({ field, existingField }, index) => {
+        if (!existingField) {
           return Promise.resolve();
         }
 
-        const existingField = existingFieldsById.get(fieldId);
-
-        if (existingField?.key === field.key) {
+        if (existingField.key === field.key) {
           return Promise.resolve();
         }
 
         return tx.templateField.update({
-          where: { id: fieldId },
-          data: { key: `__crowdlog_edit_${index}_${fieldId}` },
+          where: { id: existingField.id },
+          data: { key: `__crowdlog_edit_${index}_${existingField.id}` },
         });
       }),
     );
 
     await Promise.all(
-      fields.map((field, index) => {
-        const fieldId = field.id;
-
-        if (fieldId && existingFieldsById.has(fieldId)) {
+      fieldTargets.map(({ field, existingField }, index) => {
+        if (existingField) {
           return tx.templateField.update({
-            where: { id: fieldId },
+            where: { id: existingField.id },
             data: this.toTemplateFieldUpdateInput(field, index),
           });
         }
@@ -591,6 +587,37 @@ export class EventsService {
       keyChanges,
       removedFieldKeys,
     );
+  }
+
+  private resolveTemplateFieldTargets(
+    existingFields: Array<{ id: string; key: string }>,
+    fields: UpdateTemplateFieldInputDto[],
+  ) {
+    const existingFieldsById = new Map(
+      existingFields.map((field) => [field.id, field]),
+    );
+    const existingFieldsByKey = new Map(
+      existingFields.map((field) => [field.key, field]),
+    );
+    const retainedFieldIds = new Set<string>();
+
+    return fields.map((field) => {
+      const existingFieldById = field.id
+        ? existingFieldsById.get(field.id)
+        : undefined;
+      const existingFieldByKey = existingFieldsByKey.get(field.key);
+      const existingField =
+        existingFieldById ??
+        (existingFieldByKey && !retainedFieldIds.has(existingFieldByKey.id)
+          ? existingFieldByKey
+          : undefined);
+
+      if (existingField) {
+        retainedFieldIds.add(existingField.id);
+      }
+
+      return { field, existingField };
+    });
   }
 
   private ensureUniqueFieldKeys(fields: TemplateFieldInputDto[]) {
@@ -666,6 +693,22 @@ export class EventsService {
         });
       }),
     );
+  }
+
+  private rethrowEventUpdateError(error: unknown): never {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") {
+        throw new BadRequestException("Template field keys must be unique.");
+      }
+
+      if (error.code === "P2003" || error.code === "P2014") {
+        throw new BadRequestException(
+          "Template fields could not be reconciled with existing extracted records.",
+        );
+      }
+    }
+
+    throw error;
   }
 
   private jsonRecord(value: Prisma.JsonValue) {

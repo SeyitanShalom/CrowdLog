@@ -133,17 +133,52 @@ function fieldFromDraft(field: DraftField, index: number): TemplateField {
   };
 }
 
+function fieldToDraft(field: TemplateField): DraftField {
+  return {
+    ...field,
+    aliasesText: field.aliases.join(", "),
+    optionsText: field.options.join(", "),
+  };
+}
+
 function eventToDraft(event: CrowdLogEvent): EventDraft {
   return {
     title: event.title,
     description: event.description,
     eventDate: event.eventDate,
     templateName: event.template.name,
-    fields: event.template.fields.map((field) => ({
-      ...field,
-      aliasesText: field.aliases.join(", "),
-      optionsText: field.options.join(", "),
-    })),
+    fields: event.template.fields.map(fieldToDraft),
+  };
+}
+
+function mergeTemplateFieldsIntoDraft(
+  draft: EventDraft,
+  fields: TemplateField[],
+): EventDraft {
+  const currentFieldsById = new Map(
+    draft.fields.map((field) => [field.id, field]),
+  );
+  const currentFieldsByKey = new Map(
+    draft.fields.map((field) => [field.key, field]),
+  );
+
+  return {
+    ...draft,
+    fields: fields.map((field) => {
+      const currentField =
+        currentFieldsById.get(field.id) ?? currentFieldsByKey.get(field.key);
+
+      if (!currentField) {
+        return fieldToDraft(field);
+      }
+
+      return {
+        ...currentField,
+        id: field.id,
+        key: field.key,
+        sortOrder: field.sortOrder,
+      };
+    }),
   };
 }
 
@@ -695,7 +730,14 @@ export function TemplateBuilder() {
       const otherKeys = fields
         .filter((currentField) => currentField.id !== id)
         .map((currentField) => currentField.key);
-      const nextKey = dedupeFieldKey(normalizeFieldKey(label), otherKeys);
+      const isSavedField = Boolean(
+        editingEvent?.template.fields.some(
+          (templateField) => templateField.id === id,
+        ),
+      );
+      const nextKey = isSavedField
+        ? field.key
+        : dedupeFieldKey(normalizeFieldKey(label), otherKeys);
 
       return {
         ...field,
@@ -1396,6 +1438,11 @@ export function TemplateBuilder() {
           event.id === nextEvent.id ? nextEvent : event,
         ),
       );
+      if (editingEventId === nextEvent.id) {
+        setDraft((currentDraft) =>
+          mergeTemplateFieldsIntoDraft(currentDraft, nextEvent.template.fields),
+        );
+      }
       setFieldSuggestions((currentSuggestions) =>
         currentSuggestions.filter(
           (currentSuggestion) => !addingKeys.includes(currentSuggestion.key),
@@ -1471,6 +1518,11 @@ export function TemplateBuilder() {
           event.id === nextEvent.id ? nextEvent : event,
         ),
       );
+      if (editingEventId === nextEvent.id) {
+        setDraft((currentDraft) =>
+          mergeTemplateFieldsIntoDraft(currentDraft, nextEvent.template.fields),
+        );
+      }
       setFieldSuggestions((currentSuggestions) =>
         currentSuggestions.filter(
           (currentSuggestion) => currentSuggestion.key !== suggestion.key,
