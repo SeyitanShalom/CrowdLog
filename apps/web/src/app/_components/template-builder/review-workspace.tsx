@@ -31,8 +31,6 @@ import type {
 } from "./types";
 import {
   confidenceLabel,
-  createCsvContent,
-  downloadCsv,
   filterReviewRecords,
   formatNullableConfidence,
   formatShortDateTime,
@@ -40,7 +38,6 @@ import {
   getReviewerReports,
   getReviewCounts,
   percentage,
-  toFileSlug,
   toPositiveInteger,
   valueToBoolean,
   valueToString,
@@ -59,7 +56,6 @@ type ReviewWorkspaceProps = {
   deletingDocumentIds: string[];
   isLoadingRecords: boolean;
   isMockExtracting: boolean;
-  isExportingAllCsv: boolean;
   isExportingExcel: boolean;
   busyRecordIds: string[];
   memberDraft: { email: string; name: string };
@@ -78,7 +74,6 @@ type ReviewWorkspaceProps = {
   onReplaceDocument: (file: File) => void;
   onDeleteDocument: (document: AttendanceDocumentSummary) => void;
   onMockExtract: (options?: DocumentExtractionOptions) => void;
-  onExportAllCsv: () => void;
   onExportExcel: () => void;
   onAddSuggestedField: (suggestion: OcrFieldSuggestion) => void;
   onCellChange: (
@@ -105,7 +100,6 @@ export function ReviewWorkspace({
   deletingDocumentIds,
   isLoadingRecords,
   isMockExtracting,
-  isExportingAllCsv,
   isExportingExcel,
   busyRecordIds,
   memberDraft,
@@ -124,7 +118,6 @@ export function ReviewWorkspace({
   onReplaceDocument,
   onDeleteDocument,
   onMockExtract,
-  onExportAllCsv,
   onExportExcel,
   onAddSuggestedField,
   onCellChange,
@@ -139,6 +132,7 @@ export function ReviewWorkspace({
   const selectedDocument =
     documents.find((document) => document.id === selectedDocumentId) ?? null;
   const selectedDocumentIsPdf = selectedDocument?.fileType === "application/pdf";
+  const [rowCount, setRowCount] = useState("50");
   const [pdfPageStart, setPdfPageStart] = useState("1");
   const [pdfPageCount, setPdfPageCount] = useState("1");
   const [extractionLayout, setExtractionLayout] =
@@ -151,19 +145,11 @@ export function ReviewWorkspace({
     [fields, records, searchQuery, statusFilter],
   );
 
-  function exportFilteredRecords() {
-    if (!reviewEvent || filteredRecords.length === 0) {
-      return;
-    }
-
-    const csvContent = createCsvContent(reviewEvent, fields, filteredRecords);
-    const fileName = `${toFileSlug(reviewEvent.title)}-attendance.csv`;
-
-    downloadCsv(fileName, csvContent);
-  }
-
   function extractionOptions() {
+    const requestedRowCount = Math.min(toPositiveInteger(rowCount, 50), 100);
+
     return {
+      rowCount: requestedRowCount,
       layout: extractionLayout,
       ...(selectedDocumentIsPdf
         ? {
@@ -204,6 +190,19 @@ export function ReviewWorkspace({
                 <option value="table">Table rows</option>
                 <option value="form">Forms</option>
               </select>
+            </label>
+          ) : null}
+          {selectedDocument ? (
+            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
+              Rows
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={rowCount}
+                onChange={(event) => setRowCount(event.target.value)}
+                className="h-10 w-24 rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
+              />
             </label>
           ) : null}
           {selectedDocumentIsPdf ? (
@@ -355,25 +354,9 @@ export function ReviewWorkspace({
               <div className="flex flex-wrap gap-2 self-end">
                 <button
                   type="button"
-                  onClick={exportFilteredRecords}
-                  disabled={!reviewEvent || filteredRecords.length === 0}
-                  className="h-10 rounded-md border border-[#fed7aa] bg-white px-4 text-sm font-semibold text-[#f97316] transition hover:bg-[#fff7ed] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Export visible
-                </button>
-                <button
-                  type="button"
-                  onClick={onExportAllCsv}
-                  disabled={!reviewEvent || isExportingAllCsv}
-                  className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isExportingAllCsv ? "Exporting" : "Export all CSV"}
-                </button>
-                <button
-                  type="button"
                   onClick={onExportExcel}
-                  disabled={!reviewEvent || isExportingExcel}
-                  className="h-10 rounded-md border border-[#fed7aa] bg-[#fff7ed] px-4 text-sm font-semibold text-[#f97316] transition hover:bg-[#ffedd5] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!reviewEvent || records.length === 0 || isExportingExcel}
+                  className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isExportingExcel ? "Exporting" : "Export Excel"}
                 </button>
@@ -440,9 +423,9 @@ export function ReviewWorkspace({
             </div>
           ) : null}
 
-          <div className="overflow-x-auto rounded-lg border border-[#cfe0dc] bg-white/75 shadow-[0_14px_34px_rgba(124,69,32,0.08)]">
+          <div className="max-h-[62vh] overflow-auto rounded-lg border border-[#cfe0dc] bg-white/75 shadow-[0_14px_34px_rgba(124,69,32,0.08)] lg:max-h-[calc(100vh-18rem)]">
             <table className="min-w-full border-collapse bg-white/78 text-sm">
-              <thead className="bg-[#eaf6f2] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#5f7370]">
+              <thead className="sticky top-0 z-10 bg-[#eaf6f2] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#5f7370] shadow-[0_1px_0_#dfe4dc]">
                 <tr>
                   <th className="w-16 border-b border-[#dfe4dc] px-3 py-3">
                     Row
@@ -1087,12 +1070,15 @@ function ReviewCell({
 }) {
   const hasValidationIssues = validationIssues.length > 0;
   const needsAttention = isLowConfidence || hasValidationIssues;
+  const currentValue = valueToString(value);
   const inputClassName = `h-10 w-full rounded-md border px-3 text-sm outline-none transition disabled:cursor-not-allowed disabled:bg-[#f1f3ee] ${
     needsAttention
       ? "border-[#d9a443] bg-[#fff8e6] focus:border-[#b7831e] focus:ring-2 focus:ring-[#f4dda6]"
       : "border-[#cbd5c8] bg-white focus:border-[#f97316] focus:ring-2 focus:ring-[#fed7aa]"
   }`;
-  const selectedMultiValues = splitCommaList(valueToString(value));
+  const selectedMultiValues = splitCommaList(currentValue);
+  const hasCurrentSelectOption =
+    !currentValue || field.options.includes(currentValue);
 
   return (
     <div className="grid gap-1.5">
@@ -1115,12 +1101,15 @@ function ReviewCell({
         </label>
       ) : field.type === "select" ? (
         <select
-          value={valueToString(value)}
+          value={currentValue}
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
           className={inputClassName}
         >
           <option value="">Choose</option>
+          {!hasCurrentSelectOption ? (
+            <option value={currentValue}>{`OCR: ${currentValue}`}</option>
+          ) : null}
           {field.options.map((option) => (
             <option key={option} value={option}>
               {option}

@@ -8,6 +8,7 @@ export type StatusMessage = {
 export type ExtractionLayout = "table" | "form";
 
 export type DocumentExtractionOptions = {
+  rowCount?: number;
   pageStart?: number;
   pageCount?: number;
   layout?: ExtractionLayout;

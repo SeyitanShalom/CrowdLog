@@ -6,7 +6,7 @@ export class MockExtractDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(25)
+  @Max(100)
   rowCount?: number;
 
   @IsOptional()

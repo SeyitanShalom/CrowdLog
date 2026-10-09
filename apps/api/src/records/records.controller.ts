@@ -6,8 +6,10 @@ import {
   Patch,
   Post,
   Res,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
+import { Readable } from "node:stream";
 import { AuthGuard } from "../auth/auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { AuthenticatedUser } from "../auth/auth.types";
@@ -66,21 +68,17 @@ export class RecordsController {
   async exportRecordsXlsx(
     @Param("eventId") eventId: string,
     @CurrentUser() user: AuthenticatedUser,
-    @Res({ passthrough: true })
-    response: { setHeader: (name: string, value: string) => void },
   ) {
     const exportFile = await this.recordsService.exportRecordsXlsx(
       eventId,
       user.id,
     );
 
-    response.setHeader("Content-Type", getXlsxContentType());
-    response.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${exportFile.fileName}"`,
-    );
-
-    return exportFile.content;
+    return new StreamableFile(Readable.from([exportFile.content]), {
+      type: getXlsxContentType(),
+      disposition: `attachment; filename="${exportFile.fileName}"`,
+      length: exportFile.content.length,
+    });
   }
 
   @Post("events/:eventId/records")

@@ -272,6 +272,162 @@ test("Azure Document Intelligence OCR provider posts the document and maps table
   }
 });
 
+test("Azure Document Intelligence OCR provider reuses headers for continued tables", async () => {
+  const previousEnv = {
+    AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT,
+    AZURE_DOCUMENT_INTELLIGENCE_KEY:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY,
+    AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS,
+    AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS:
+      process.env.AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS,
+  };
+  const previousFetch = global.fetch;
+  const tempDir = join(
+    process.cwd(),
+    ".tmp",
+    "azure-document-intelligence-continued-table-test",
+  );
+  const filePath = join(tempDir, "attendance-sheet.pdf");
+  const fields = [
+    field({
+      id: "field_name",
+      label: "Name",
+      key: "name",
+      type: "TEXT",
+      required: true,
+    }),
+    field({
+      id: "field_email",
+      label: "Email",
+      key: "email",
+      type: "EMAIL",
+      required: true,
+      sortOrder: 2,
+    }),
+  ];
+  const input = extractionInput({ filePath, fields });
+
+  input.document.fileName = "attendance-sheet.pdf";
+  input.document.fileType = "application/pdf";
+  input.options.pageStart = 1;
+  input.options.pageCount = 2;
+  input.options.totalPages = 2;
+
+  await mkdir(tempDir, { recursive: true });
+  await writeFile(filePath, "pdf-bytes");
+
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT =
+    "https://crowdlog-test.cognitiveservices.azure.com";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_KEY = "azure-test-key";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_POLL_INTERVAL_MS = "0";
+  process.env.AZURE_DOCUMENT_INTELLIGENCE_TIMEOUT_MS = "1000";
+
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: {
+      get: () => null,
+    },
+    text: async () =>
+      JSON.stringify({
+        status: "succeeded",
+        analyzeResult: {
+          apiVersion: "2024-11-30",
+          modelId: "prebuilt-layout",
+          content: "Name Email Ada ada@example.com Grace grace@example.com",
+          tables: [
+            {
+              rowCount: 2,
+              columnCount: 2,
+              cells: [
+                {
+                  kind: "columnHeader",
+                  rowIndex: 0,
+                  columnIndex: 0,
+                  content: "Name",
+                },
+                {
+                  kind: "columnHeader",
+                  rowIndex: 0,
+                  columnIndex: 1,
+                  content: "Email",
+                },
+                {
+                  rowIndex: 1,
+                  columnIndex: 0,
+                  content: "Ada Okafor",
+                  confidence: 0.93,
+                  boundingRegions: [{ pageNumber: 1 }],
+                },
+                {
+                  rowIndex: 1,
+                  columnIndex: 1,
+                  content: "ada@example.com",
+                  confidence: 0.94,
+                  boundingRegions: [{ pageNumber: 1 }],
+                },
+              ],
+            },
+            {
+              rowCount: 2,
+              columnCount: 2,
+              cells: [
+                {
+                  rowIndex: 0,
+                  columnIndex: 0,
+                  content: "Grace Bello",
+                  confidence: 0.91,
+                  boundingRegions: [{ pageNumber: 2 }],
+                },
+                {
+                  rowIndex: 0,
+                  columnIndex: 1,
+                  content: "grace@example.com",
+                  confidence: 0.92,
+                  boundingRegions: [{ pageNumber: 2 }],
+                },
+                {
+                  rowIndex: 1,
+                  columnIndex: 0,
+                  content: "Tunde Adeyemi",
+                  confidence: 0.9,
+                  boundingRegions: [{ pageNumber: 2 }],
+                },
+                {
+                  rowIndex: 1,
+                  columnIndex: 1,
+                  content: "tunde@example.com",
+                  confidence: 0.91,
+                  boundingRegions: [{ pageNumber: 2 }],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+  });
+
+  try {
+    const result = await new AzureDocumentIntelligenceOcrProvider().extract(input);
+
+    assert.equal(result.rows.length, 3);
+    assert.deepEqual(result.rows.map((row) => row.data.name), [
+      "Ada Okafor",
+      "Grace Bello",
+      "Tunde Adeyemi",
+    ]);
+    assert.equal(result.rows[1].data.email, "grace@example.com");
+    assert.equal(result.rows[1].sourcePage, 2);
+    assert.ok(result.rows[1].confidenceScore >= 0.75);
+  } finally {
+    restoreEnv(previousEnv);
+    global.fetch = previousFetch;
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("configured OCR provider uses explicit azure mode", async () => {
   const previousEnv = {
     OCR_PROVIDER: process.env.OCR_PROVIDER,

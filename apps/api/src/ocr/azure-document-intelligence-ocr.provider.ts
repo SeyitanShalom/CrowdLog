@@ -281,16 +281,31 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
   ) {
     const tables = arrayOfObjects<AzureTable>(analyzeResult.tables);
     const rows: OcrExtractedRow[] = [];
+    let previousHeaderMappings: HeaderMapping[] | null = null;
 
     for (const table of tables) {
       const cells = arrayOfObjects<AzureTableCell>(table.cells);
-      const headerRowIndex = this.headerRowIndex(cells);
-      const mappings = this.headerMappings(fields, cells, headerRowIndex);
+      const explicitHeaderRowIndex = this.explicitHeaderRowIndex(cells);
+      const hasExplicitHeader = explicitHeaderRowIndex !== null;
+      const headerRowIndex = explicitHeaderRowIndex ?? this.headerRowIndex(cells);
+      let reusePreviousHeader = false;
+      let mappings: HeaderMapping[];
+
+      if (!hasExplicitHeader && previousHeaderMappings) {
+        reusePreviousHeader = true;
+        mappings = previousHeaderMappings;
+      } else {
+        mappings = this.headerMappings(fields, cells, headerRowIndex);
+        previousHeaderMappings = mappings;
+      }
+
       const dataRowIndexes = uniqueNumbers(
         cells
           .map((cell) => integerValue(cell.rowIndex))
           .filter((rowIndex): rowIndex is number => rowIndex !== null)
-          .filter((rowIndex) => rowIndex > headerRowIndex),
+          .filter((rowIndex) =>
+            reusePreviousHeader ? true : rowIndex > headerRowIndex,
+          ),
       );
 
       for (const rowIndex of dataRowIndexes) {
@@ -394,6 +409,20 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
   }
 
   private headerRowIndex(cells: AzureTableCell[]) {
+    const explicitHeaderRowIndex = this.explicitHeaderRowIndex(cells);
+
+    if (explicitHeaderRowIndex !== null) {
+      return explicitHeaderRowIndex;
+    }
+
+    const rowIndexes = cells
+      .map((cell) => integerValue(cell.rowIndex))
+      .filter((rowIndex): rowIndex is number => rowIndex !== null);
+
+    return rowIndexes.length > 0 ? Math.min(...rowIndexes) : 0;
+  }
+
+  private explicitHeaderRowIndex(cells: AzureTableCell[]) {
     const headerIndexes = cells
       .filter((cell) => cell.kind === "columnHeader")
       .map((cell) => integerValue(cell.rowIndex))
@@ -403,11 +432,7 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
       return Math.min(...headerIndexes);
     }
 
-    const rowIndexes = cells
-      .map((cell) => integerValue(cell.rowIndex))
-      .filter((rowIndex): rowIndex is number => rowIndex !== null);
-
-    return rowIndexes.length > 0 ? Math.min(...rowIndexes) : 0;
+    return null;
   }
 
   private headerMappings(

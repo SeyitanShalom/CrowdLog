@@ -202,6 +202,7 @@ export async function exportEventRecordsCsv(eventId: string) {
     path: `/events/${eventId}/records/export`,
     fallbackFileName: `crowdlog-event-${eventId}.csv`,
     failureLabel: "CSV export",
+    fallbackContentType: "text/csv;charset=utf-8",
   });
 }
 
@@ -210,6 +211,8 @@ export async function exportEventRecordsXlsx(eventId: string) {
     path: `/events/${eventId}/records/export.xlsx`,
     fallbackFileName: `crowdlog-event-${eventId}.xlsx`,
     failureLabel: "Excel export",
+    fallbackContentType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
 
@@ -217,10 +220,12 @@ async function exportEventRecordsFile({
   path,
   fallbackFileName,
   failureLabel,
+  fallbackContentType,
 }: {
   path: string;
   fallbackFileName: string;
   failureLabel: string;
+  fallbackContentType: string;
 }) {
   let response: Response;
 
@@ -239,12 +244,69 @@ async function exportEventRecordsFile({
     );
   }
 
+  const contentType = response.headers.get("Content-Type") ?? fallbackContentType;
+  const content = await response.arrayBuffer();
+
   return {
-    blob: await response.blob(),
+    blob: blobFromExportContent(content, contentType, fallbackContentType),
     fileName:
       fileNameFromContentDisposition(response.headers.get("Content-Disposition")) ??
       fallbackFileName,
   };
+}
+
+function blobFromExportContent(
+  content: ArrayBuffer,
+  contentType: string,
+  fallbackContentType: string,
+) {
+  const bytes = new Uint8Array(content);
+  const serializedBufferBytes = bufferBytesFromSerializedJson(bytes);
+
+  if (serializedBufferBytes) {
+    return new Blob([serializedBufferBytes], { type: fallbackContentType });
+  }
+
+  return new Blob([bytes], { type: contentType });
+}
+
+function bufferBytesFromSerializedJson(bytes: Uint8Array) {
+  const marker = '{"type":"Buffer","data":[';
+  const prefix = new TextDecoder().decode(bytes.slice(0, marker.length));
+
+  if (prefix !== marker) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !("type" in parsed) ||
+      !("data" in parsed) ||
+      parsed.type !== "Buffer" ||
+      !Array.isArray(parsed.data)
+    ) {
+      return null;
+    }
+
+    const data = parsed.data;
+
+    if (
+      !data.every(
+        (value) =>
+          Number.isInteger(value) && value >= 0 && value <= 255,
+      )
+    ) {
+      return null;
+    }
+
+    return new Uint8Array(data);
+  } catch {
+    return null;
+  }
 }
 
 export async function listDocuments(eventId: string) {
@@ -306,7 +368,7 @@ export type ExtractDocumentOptions = {
 
 export async function extractDocument(
   documentId: string,
-  options: ExtractDocumentOptions = { rowCount: 25 },
+  options: ExtractDocumentOptions = { rowCount: 50 },
 ) {
   return request<MockExtractionResult>(`/documents/${documentId}/extract`, {
     method: "POST",

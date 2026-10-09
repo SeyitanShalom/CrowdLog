@@ -31,7 +31,6 @@ import {
   deleteAttendanceDocument,
   deleteEvent,
   extractDocument,
-  exportEventRecordsCsv,
   exportEventRecordsXlsx,
   getCurrentSession,
   getEventRecordAnalytics,
@@ -242,7 +241,6 @@ export function TemplateBuilder() {
   const [deletingDocumentIds, setDeletingDocumentIds] = useState<string[]>([]);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
   const [isMockExtracting, setIsMockExtracting] = useState(false);
-  const [isExportingAllCsv, setIsExportingAllCsv] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [busyRecordIds, setBusyRecordIds] = useState<string[]>([]);
   const [deletingEventIds, setDeletingEventIds] = useState<string[]>([]);
@@ -1264,7 +1262,7 @@ export function TemplateBuilder() {
 
     const isExtractingSelectedDocument = Boolean(selectedDocumentId);
     const extractionOptions = {
-      rowCount: 25,
+      rowCount: 50,
       ...options,
     };
 
@@ -1409,33 +1407,6 @@ export function TemplateBuilder() {
     }
   }
 
-  async function exportAllEventRecords() {
-    if (!reviewEvent) {
-      setReviewStatus({ tone: "error", text: "Select a saved event first." });
-      return;
-    }
-
-    setIsExportingAllCsv(true);
-    setReviewStatus({ tone: "info", text: "Preparing full CSV export." });
-
-    try {
-      const exportFile = await exportEventRecordsCsv(reviewEvent.id);
-
-      downloadBlob(exportFile.fileName, exportFile.blob);
-      setReviewStatus({
-        tone: "success",
-        text: "Full event CSV export downloaded.",
-      });
-    } catch (error) {
-      setReviewStatus({
-        tone: "error",
-        text: `Could not export full CSV. ${getErrorMessage(error)}`,
-      });
-    } finally {
-      setIsExportingAllCsv(false);
-    }
-  }
-
   async function exportEventRecordsExcel() {
     if (!reviewEvent) {
       setReviewStatus({ tone: "error", text: "Select a saved event first." });
@@ -1511,7 +1482,7 @@ export function TemplateBuilder() {
         return;
       }
 
-      const result = await extractDocument(selectedDocumentId, { rowCount: 25 });
+      const result = await extractDocument(selectedDocumentId, { rowCount: 50 });
       setRecords((currentRecords) => [
         ...result.records,
         ...currentRecords.filter(
@@ -2005,7 +1976,6 @@ export function TemplateBuilder() {
             deletingDocumentIds={deletingDocumentIds}
             isLoadingRecords={isLoadingRecords}
             isMockExtracting={isMockExtracting}
-            isExportingAllCsv={isExportingAllCsv}
             isExportingExcel={isExportingExcel}
             busyRecordIds={busyRecordIds}
             memberDraft={memberDraft}
@@ -2024,7 +1994,6 @@ export function TemplateBuilder() {
             onReplaceDocument={replaceReviewDocument}
             onDeleteDocument={deleteReviewDocument}
             onMockExtract={runMockExtraction}
-            onExportAllCsv={exportAllEventRecords}
             onExportExcel={exportEventRecordsExcel}
             onAddSuggestedField={addSuggestedField}
             onCellChange={updateRecordCell}
@@ -2110,13 +2079,13 @@ export function TemplateBuilder() {
                 Saved events
               </h2>
             </div>
-            <div className="divide-y divide-[#dce8e4]">
+            <div className="grid gap-3 px-4 py-4">
               {isLoadingEvents ? (
-                <p className="px-4 py-4 text-sm text-[#667265]">
+                <p className="text-sm text-[#667265]">
                   Loading saved events...
                 </p>
               ) : savedEvents.length === 0 ? (
-                <p className="px-4 py-4 text-sm text-[#667265]">
+                <p className="text-sm text-[#667265]">
                   No saved templates yet.
                 </p>
               ) : (
@@ -2126,62 +2095,72 @@ export function TemplateBuilder() {
                   const isOwner = eventRole === "owner";
 
                   return (
-                    <div
+                    <article
                       key={event.id}
-                      className="px-4 py-4 transition hover:bg-white/42"
+                      className="grid gap-3 rounded-lg border border-[#dce8e4] bg-white/62 p-3 shadow-sm transition hover:border-[#cbd5c8] hover:bg-white/82"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-[#2f241b]">
-                            {event.title}
+                      <div className="min-w-0">
+                        <p className="break-words text-sm font-semibold leading-5 text-[#2f241b]">
+                          {event.title}
+                        </p>
+                        {event.description ? (
+                          <p className="mt-1 break-words text-xs leading-5 text-[#667265]">
+                            {event.description}
                           </p>
-                          <p className="mt-1 text-xs text-[#667265]">
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap gap-1.5 text-xs font-semibold text-[#526052]">
+                          <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1">
                             {event.template.fields.length} fields
-                          </p>
+                          </span>
+                          {event.eventDate ? (
+                            <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1">
+                              {event.eventDate}
+                            </span>
+                          ) : null}
                           {eventRole ? (
-                            <span className="mt-2 inline-flex rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1 text-xs font-semibold text-[#526052]">
+                            <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1">
                               {EVENT_ROLE_LABELS[eventRole]}
                             </span>
                           ) : null}
                         </div>
-                        <div className="flex shrink-0 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => loadSavedEvent(event)}
-                            disabled={isDeleting}
-                            className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isOwner ? "Edit" : "View"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => selectReviewEvent(event)}
-                            disabled={isDeleting}
-                            className="action-primary h-9 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Review
-                          </button>
-                          {eventRole ? (
-                            <Link
-                              href={`/events/${event.id}/team`}
-                              className="inline-flex h-9 items-center rounded-md border border-[#cbd5c8] px-3 text-sm font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
-                            >
-                              Team
-                            </Link>
-                          ) : null}
-                          {isOwner ? (
-                            <button
-                              type="button"
-                              onClick={() => deleteSavedEvent(event)}
-                              disabled={isDeleting}
-                              className="h-9 rounded-md border border-[#d9b7aa] px-3 text-sm font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {isDeleting ? "Deleting" : "Delete"}
-                            </button>
-                          ) : null}
-                        </div>
                       </div>
-                    </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => loadSavedEvent(event)}
+                          disabled={isDeleting}
+                          className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isOwner ? "Edit" : "View"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectReviewEvent(event)}
+                          disabled={isDeleting}
+                          className="action-primary h-9 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Review
+                        </button>
+                        {eventRole ? (
+                          <Link
+                            href={`/events/${event.id}/team`}
+                            className="inline-flex h-9 items-center justify-center rounded-md border border-[#cbd5c8] px-3 text-sm font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
+                          >
+                            Team
+                          </Link>
+                        ) : null}
+                        {isOwner ? (
+                          <button
+                            type="button"
+                            onClick={() => deleteSavedEvent(event)}
+                            disabled={isDeleting}
+                            className="h-9 rounded-md border border-[#d9b7aa] px-3 text-sm font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isDeleting ? "Deleting" : "Delete"}
+                          </button>
+                        ) : null}
+                      </div>
+                    </article>
                   );
                 })
               )}
