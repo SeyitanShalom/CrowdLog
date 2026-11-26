@@ -61,10 +61,7 @@ import {
   FIELD_TYPE_LABELS,
 } from "./template-builder/constants";
 import { canManageEvent, eventRoleForUser } from "./template-builder/event-access";
-import {
-  ReviewWorkspace,
-  SummaryItem,
-} from "./template-builder/review-workspace";
+import { ReviewWorkspace } from "./template-builder/review-workspace";
 import type {
   DocumentExtractionOptions,
   StatusMessage,
@@ -290,6 +287,7 @@ export function TemplateBuilder() {
   const [addingFieldKeys, setAddingFieldKeys] = useState<string[]>([]);
   const [reviewStatus, setReviewStatus] = useState<StatusMessage>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const reviewEventId = reviewEvent?.id;
 
   useEffect(() => {
     setHasHydrated(true);
@@ -442,6 +440,21 @@ export function TemplateBuilder() {
     }, 0);
   }, []);
 
+  useEffect(() => {
+    if (!reviewEventId) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      document.getElementById("portfolio-review-workspace")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [reviewEventId]);
+
   const templateFields = useMemo(
     () =>
       draft.fields
@@ -450,11 +463,6 @@ export function TemplateBuilder() {
     [draft.fields],
   );
 
-  const requiredCount = templateFields.filter((field) => field.required).length;
-  const fieldTypeSummary = FIELD_TYPES.map((type) => ({
-    type,
-    count: templateFields.filter((field) => field.type === type).length,
-  })).filter((entry) => entry.count > 0);
   const canManageReviewEvent = canManageEvent(reviewEvent, currentUser);
   const editingEvent = useMemo(() => {
     if (!editingEventId) {
@@ -816,11 +824,6 @@ export function TemplateBuilder() {
 
     if (!templateName) {
       setStatus({ tone: "error", text: "Template name is required." });
-      return;
-    }
-
-    if (fields.length === 0) {
-      setStatus({ tone: "error", text: "Add at least one attendance field." });
       return;
     }
 
@@ -1682,39 +1685,38 @@ export function TemplateBuilder() {
   }
 
   return (
-    <div className="app-shell min-h-screen text-[#2f241b] lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
-      <header className="sticky top-0 z-30 shrink-0 border-b border-white/50 bg-white/62 shadow-[0_18px_60px_rgba(124,69,32,0.08)] backdrop-blur-2xl">
-        <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-5 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <div className="motion-rise flex min-w-0 items-center gap-4">
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-[#ff6a00] text-sm font-black text-white shadow-[0_14px_30px_rgba(249,115,22,0.28)]">
+    <div className="app-shell min-h-screen text-[#1f2d28] lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
+      <header className="sticky top-0 z-30 shrink-0 border-b border-[#e3e9e5] bg-white/95 shadow-sm backdrop-blur-xl">
+        <div className="mx-auto flex w-full max-w-[1480px] flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2 sm:px-6 sm:py-3 lg:px-8">
+          <div className="motion-rise flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#246c5a] text-xs font-bold tracking-wide text-white sm:h-10 sm:w-10">
               CL
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#ff6a00]">
+              <h1 className="text-sm font-semibold tracking-tight text-[#1f2d28] sm:hidden">
                 CrowdLog
-              </p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-normal text-[#2f241b] sm:text-3xl">
-                Attendance sheets into clean records.
               </h1>
+              <div className="hidden sm:block">
+                <p className="text-xs font-semibold uppercase tracking-[0.13em] text-[#5d746a]">
+                  CrowdLog workspace
+                </p>
+                <h1 className="mt-0.5 text-base font-semibold tracking-tight text-[#1f2d28] sm:text-xl">
+                  Attendance management
+                </h1>
+              </div>
             </div>
           </div>
-          <div className="motion-rise-delay-1 flex flex-col gap-3 lg:items-end">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-[#70411d]">
-              <span className="rounded-md border border-[#fed7aa] bg-[#fff7ed]/80 px-3 py-1.5 shadow-sm">
-                Auth phase
-              </span>
-              <span className="rounded-md border border-[#ecc6a9] bg-[#fff0e5]/80 px-3 py-1.5 shadow-sm">
-                Owner events
-              </span>
-              <span className="rounded-md border border-[#b9cfdf] bg-[#ebf5fb]/80 px-3 py-1.5 shadow-sm">
-                OCR review
-              </span>
+          <div className="motion-rise-delay-1 ml-auto flex shrink-0 items-center justify-end gap-2">
+            <div className="flex items-center gap-2">
+              <p className="hidden text-sm text-[#68776f] xl:block">
+                Create events, capture attendance, review records.
+              </p>
               <button
                 type="button"
                 aria-label="Open website help"
                 title="Open website help"
                 onClick={() => setIsHelpOpen(true)}
-                className="grid h-8 w-8 place-items-center rounded-full border border-[#fed7aa] bg-white/80 text-sm font-black text-[#f97316] shadow-sm hover:bg-white"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[#dce5df] bg-white text-sm font-semibold text-[#52685e] hover:border-[#b8c9bf] hover:bg-[#f7faf8]"
               >
                 ?
               </button>
@@ -1737,19 +1739,50 @@ export function TemplateBuilder() {
       </header>
 
       {isHelpOpen ? (
-        <WebsiteHelpDialog onClose={() => setIsHelpOpen(false)} />
+        <WebsiteHelpDialog
+          hasReviewEvent={Boolean(reviewEvent)}
+          onClose={() => setIsHelpOpen(false)}
+        />
       ) : null}
 
-      <main className="mx-auto grid w-full max-w-[1480px] gap-6 px-4 py-6 sm:px-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:overflow-hidden lg:px-8 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <main className="mx-auto grid w-full max-w-[1480px] gap-3 px-3 py-3 sm:gap-5 sm:px-6 sm:py-5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-5 lg:overflow-hidden lg:px-8 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <nav
+          aria-label="Workspace sections"
+          className="grid grid-cols-3 gap-2 lg:hidden"
+        >
+          {[
+            { href: "#portfolio-template-builder", label: "Set up" },
+            { href: "#portfolio-saved-events", label: "Saved events" },
+            { href: "#portfolio-review-workspace", label: "Review" },
+          ].map((item) => (
+            <a
+              key={item.href}
+              href={item.href}
+              className="flex h-11 items-center justify-center whitespace-nowrap rounded-lg border border-[#dce5df] bg-white px-2 text-xs font-semibold text-[#52685e] shadow-sm hover:bg-[#f7faf8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2d7160]"
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
         <section
           id="portfolio-template-builder"
-          className="scroll-mt-5 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-2 lg:pb-6"
+          className="scroll-mt-28 space-y-4 lg:scroll-mt-5 lg:min-h-0 lg:space-y-5 lg:overflow-y-auto lg:pr-2 lg:pb-6"
         >
-          <div className="glass-panel motion-rise overflow-hidden rounded-lg">
-            <div className="panel-head px-4 py-4 sm:px-5">
-              <h2 className="text-lg font-semibold text-[#2f241b]">Event</h2>
+          <div className="glass-panel motion-rise overflow-hidden rounded-xl">
+            <div className="panel-head flex items-center gap-3 px-3 py-3 sm:px-5 sm:py-4">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#eaf4ef] text-xs font-bold text-[#28644f]">
+                01
+              </span>
+              <div>
+                <h2 className="text-base font-semibold text-[#1f2d28]">
+                  Event details
+                </h2>
+                <p className="mt-0.5 text-sm text-[#68776f]">
+                  Set up the event you’re collecting attendance for.
+                </p>
+              </div>
             </div>
-            <div className="grid gap-4 px-4 py-4 sm:grid-cols-2 sm:px-5">
+            <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 sm:gap-4 sm:px-5 sm:py-4">
               <label className="grid gap-1.5 text-sm font-medium text-[#334033]">
                 Event title
                 <input
@@ -1776,30 +1809,42 @@ export function TemplateBuilder() {
                   onChange={(event) =>
                     updateDraft("description", event.target.value)
                   }
-                  rows={3}
-                  className="min-h-24 resize-y rounded-md border border-[#cbd5c8] bg-white px-3 py-2 text-sm font-normal outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                  rows={2}
+                  className="min-h-20 resize-y rounded-md border border-[#cbd5c8] bg-white px-3 py-2 text-sm font-normal outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa] sm:min-h-24"
                 />
               </label>
             </div>
           </div>
 
-          <div className="glass-panel motion-rise-delay-1 overflow-hidden rounded-lg">
-            <div className="panel-head flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-              <div>
-                <h2 className="text-lg font-semibold text-[#2f241b]">
-                  Attendance template
-                </h2>
-                <p className="mt-1 text-sm text-[#5f7370]">
-                  Event - Template - Fields
-                </p>
+          <div className="glass-panel motion-rise-delay-1 overflow-hidden rounded-xl">
+            <div className="panel-head flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4">
+              <div className="flex items-center gap-3">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#eaf4ef] text-xs font-bold text-[#28644f]">
+                  02
+                </span>
+                <div>
+                  <h2 className="text-base font-semibold text-[#1f2d28]">
+                    Attendance template
+                  </h2>
+                  <p className="mt-0.5 text-sm text-[#68776f]">
+                    Choose the information each attendee should provide.
+                  </p>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={addField}
-                className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#fed7aa]"
-              >
-                + Add field
-              </button>
+              <div className="flex items-center gap-2">
+                {draft.fields.length > 0 ? (
+                  <span className="rounded-full bg-[#f1f5f2] px-2.5 py-1 text-xs font-semibold text-[#52685e]">
+                    {draft.fields.length} fields
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={addField}
+                  className="action-primary h-11 rounded-lg px-4 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#fed7aa]"
+                >
+                  + Add field
+                </button>
+              </div>
             </div>
 
             <div className="px-4 py-4 sm:px-5">
@@ -1821,13 +1866,15 @@ export function TemplateBuilder() {
                       No attendance fields yet.
                     </p>
                     <p className="mt-1">
-                      Add fields for the information you want to capture, such
-                      as name, matric number, department, level, or signature.
+                      You can save this event without fields. When you extract a
+                      sheet, its detected columns will be added to the template
+                      automatically. Add fields here only if you want to define
+                      them yourself.
                     </p>
                     <button
                       type="button"
                       onClick={addField}
-                      className="action-primary mt-4 h-10 rounded-md px-4 text-sm font-semibold text-white"
+                      className="action-primary mt-4 h-11 rounded-md px-4 text-sm font-semibold text-white"
                     >
                       Add first field
                     </button>
@@ -1836,44 +1883,31 @@ export function TemplateBuilder() {
                   draft.fields.map((field, index) => (
                     <article
                       key={field.id}
-                      className="field-card overflow-hidden rounded-lg border"
+                      className="field-card overflow-hidden rounded-xl border"
                     >
-                      <div className="flex flex-col gap-3 border-b border-[#dce8e4] bg-white/50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                      <div className="flex items-center gap-3 border-b border-[#dce8e4] bg-white/50 px-3 py-2.5 sm:px-4">
                         <div className="flex min-w-0 items-center gap-3">
-                          <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-md bg-gradient-to-br from-[#ff6a00] to-[#fff700] px-2 text-sm font-semibold text-white shadow-sm">
+                          <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-[#eaf4ef] px-2 text-sm font-bold text-[#28644f]">
                             {index + 1}
                           </span>
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-[#2f241b]">
                               {field.label || `Field ${index + 1}`}
                             </p>
-                            <p className="mt-1 block truncate text-xs font-medium text-[#6d7f7c]">
-                              Order {index + 1} in this attendance template
-                            </p>
                           </div>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                          <span className="inline-flex h-8 items-center rounded-md border border-[#cbd8c8] bg-white px-2.5 text-xs font-semibold text-[#36513f]">
-                            {FIELD_TYPE_LABELS[field.type]}
-                          </span>
-                          {field.required ? (
-                            <span className="inline-flex h-8 items-center rounded-md border border-[#d7d0bd] bg-[#f8f1dd] px-2.5 text-xs font-semibold text-[#66562b]">
-                              Required
-                            </span>
-                          ) : null}
-                        </div>
                       </div>
 
-                      <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 sm:px-4 xl:grid-cols-[minmax(220px,1fr)_150px_150px_minmax(220px,1fr)]">
-                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] xl:col-span-2">
+                      <div className="grid grid-cols-2 gap-3 px-3 py-3 sm:px-4 xl:grid-cols-[minmax(220px,1fr)_150px_150px_minmax(220px,1fr)]">
+                        <label className="col-span-2 grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] xl:col-span-2">
                           Label
                           <input
                             value={field.label}
                             onChange={(event) =>
                               updateFieldLabel(field.id, event.target.value)
                             }
-                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                            className="h-11 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa] sm:h-10"
                           />
                         </label>
 
@@ -1887,7 +1921,7 @@ export function TemplateBuilder() {
                                 type: event.target.value as FieldType,
                               }))
                             }
-                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                            className="h-11 w-full rounded-md border border-[#cbd5c8] bg-white px-2 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa] sm:h-10"
                           >
                             {FIELD_TYPES.map((type) => (
                               <option key={type} value={type}>
@@ -1897,7 +1931,7 @@ export function TemplateBuilder() {
                           </select>
                         </label>
 
-                        <label className="flex h-10 items-center gap-2 self-end rounded-md border border-[#dfe4dc] bg-white px-3 text-sm font-medium text-[#334033]">
+                        <label className="flex h-11 items-center gap-2 self-end rounded-md border border-[#dfe4dc] bg-white px-3 text-sm font-medium text-[#334033] sm:h-10">
                           <input
                             type="checkbox"
                             checked={field.required}
@@ -1912,7 +1946,7 @@ export function TemplateBuilder() {
                           Required
                         </label>
 
-                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] sm:col-span-2 xl:col-span-2">
+                        <label className="col-span-2 grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] xl:col-span-2">
                           Aliases
                           <input
                             value={field.aliasesText}
@@ -1922,47 +1956,52 @@ export function TemplateBuilder() {
                                 aliasesText: event.target.value,
                               }))
                             }
-                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
+                            className="h-11 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa] sm:h-10"
                           />
                         </label>
 
-                        <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] sm:col-span-2 xl:col-span-2">
-                          Options
-                          <input
-                            value={field.optionsText}
-                            disabled={!fieldUsesOptions(field.type)}
-                            onChange={(event) =>
-                              updateField(field.id, (currentField) => ({
-                                ...currentField,
-                                optionsText: event.target.value,
-                              }))
-                            }
-                            className="h-10 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition disabled:bg-[#f1f3ee] disabled:text-[#8a9588] focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa]"
-                          />
-                        </label>
+                        {fieldUsesOptions(field.type) ? (
+                          <label className="col-span-2 grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265] xl:col-span-2">
+                            Options
+                            <input
+                              value={field.optionsText}
+                              onChange={(event) =>
+                                updateField(field.id, (currentField) => ({
+                                  ...currentField,
+                                  optionsText: event.target.value,
+                                }))
+                              }
+                              className="h-11 w-full rounded-md border border-[#cbd5c8] bg-white px-3 text-sm font-normal normal-case tracking-normal text-[#1f2a22] outline-none transition focus:border-[#ff6a00] focus:ring-2 focus:ring-[#fed7aa] sm:h-10"
+                            />
+                          </label>
+                        ) : null}
                       </div>
 
-                      <div className="flex flex-col gap-2 border-t border-[#e8ece5] bg-white/62 px-3 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-4">
+                      <div className="flex items-center justify-end gap-2 border-t border-[#e8ece5] bg-white/62 px-3 py-3 sm:px-4">
                         <button
                           type="button"
                           onClick={() => moveField(field.id, -1)}
                           disabled={index === 0}
-                          className="h-10 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-45"
+                          aria-label={`Move field ${index + 1} up`}
+                          title="Move up"
+                          className="grid h-11 w-11 place-items-center rounded-lg border border-[#dce5df] text-base font-semibold text-[#52685e] transition hover:bg-[#f3f7f4] disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          Move up
+                          ↑
                         </button>
                         <button
                           type="button"
                           onClick={() => moveField(field.id, 1)}
                           disabled={index === draft.fields.length - 1}
-                          className="h-10 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-45"
+                          aria-label={`Move field ${index + 1} down`}
+                          title="Move down"
+                          className="grid h-11 w-11 place-items-center rounded-lg border border-[#dce5df] text-base font-semibold text-[#52685e] transition hover:bg-[#f3f7f4] disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          Move down
+                          ↓
                         </button>
                         <button
                           type="button"
                           onClick={() => removeField(field.id)}
-                          className="h-10 rounded-md border border-[#d9b7aa] px-3 text-sm font-medium text-[#8a3d2d] transition hover:bg-[#fff1ed]"
+                          className="h-11 rounded-md border border-[#d9b7aa] px-3 text-sm font-medium text-[#8a3d2d] transition hover:bg-[#fff1ed]"
                         >
                           Remove
                         </button>
@@ -2061,89 +2100,34 @@ export function TemplateBuilder() {
 
         <aside className="space-y-5 lg:min-h-0 lg:overflow-y-auto lg:pl-1 lg:pb-6">
           <section
-            id="portfolio-template-summary"
-            className="glass-panel-strong motion-rise-delay-1 overflow-hidden rounded-lg"
-          >
-            <div className="panel-head px-4 py-4">
-              <h2 className="text-lg font-semibold text-[#2f241b]">
-                Template summary
-              </h2>
-            </div>
-            <div className="grid gap-3 px-4 py-4">
-              <div className="grid grid-cols-2 gap-3">
-                <SummaryItem
-                  label="Fields"
-                  value={String(templateFields.length)}
-                />
-                <SummaryItem label="Required" value={String(requiredCount)} />
-              </div>
-              <div className="soft-card rounded-lg p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#667265]">
-                  Field types
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs font-medium text-[#70411d]">
-                  {fieldTypeSummary.length > 0 ? (
-                    fieldTypeSummary.map((entry) => (
-                      <span
-                        key={entry.type}
-                        className="rounded-md border border-[#fed7aa] bg-white/75 px-2.5 py-1 shadow-sm"
-                      >
-                        {FIELD_TYPE_LABELS[entry.type]}: {entry.count}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-[#6d7f7c]">
-                      Add fields to see the mix.
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="soft-card rounded-lg p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#667265]">
-                  Draft readiness
-                </p>
-                <div className="mt-3 grid gap-2 text-sm text-[#70411d]">
-                  <div className="flex items-center justify-between gap-3 rounded-md bg-white/70 px-3 py-2">
-                    <span>Event title</span>
-                    <span className="font-semibold text-[#2f241b]">
-                      {draft.title.trim() ? "Set" : "Missing"}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 rounded-md bg-white/70 px-3 py-2">
-                    <span>Template name</span>
-                    <span className="font-semibold text-[#2f241b]">
-                      {draft.templateName.trim() ? "Set" : "Missing"}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 rounded-md bg-white/70 px-3 py-2">
-                    <span>Required coverage</span>
-                    <span className="font-semibold text-[#2f241b]">
-                      {requiredCount} of {templateFields.length}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section
             id="portfolio-saved-events"
-            className="glass-panel-strong motion-rise-delay-2 overflow-hidden rounded-lg"
+            className="glass-panel-strong motion-rise-delay-2 scroll-mt-28 overflow-hidden rounded-xl lg:scroll-mt-5"
           >
-            <div className="panel-head px-4 py-4">
-              <h2 className="text-lg font-semibold text-[#2f241b]">
+            <div className="panel-head flex items-center justify-between gap-3 px-4 py-4">
+              <h2 className="text-base font-semibold text-[#1f2d28]">
                 Saved events
               </h2>
+              <span className="rounded-full bg-[#eaf4ef] px-2.5 py-1 text-xs font-semibold text-[#28644f]">
+                {savedEvents.length}
+              </span>
             </div>
             <div className="grid gap-3 px-4 py-4">
+              <p className="text-sm leading-5 text-[#68776f]">
+                Edit an attendance sheet or open an event to review its records.
+              </p>
               {isLoadingEvents ? (
                 <p className="text-sm text-[#667265]">
                   Loading saved events...
                 </p>
               ) : savedEvents.length === 0 ? (
-                <p className="text-sm text-[#667265]">
-                  No saved templates yet.
-                </p>
+                <div className="rounded-xl border border-dashed border-[#d7e1da] bg-[#f8faf8] px-4 py-5 text-center">
+                  <p className="text-sm font-semibold text-[#34463d]">
+                    No saved events yet
+                  </p>
+                  <p className="mt-1 text-sm leading-5 text-[#68776f]">
+                    Save your first event to see it here.
+                  </p>
+                </div>
               ) : (
                 savedEvents.map((event) => {
                   const isDeleting = deletingEventIds.includes(event.id);
@@ -2153,28 +2137,28 @@ export function TemplateBuilder() {
                   return (
                     <article
                       key={event.id}
-                      className="grid gap-3 rounded-lg border border-[#dce8e4] bg-white/62 p-3 shadow-sm transition hover:border-[#cbd5c8] hover:bg-white/82"
+                      className="grid gap-3 rounded-xl border border-[#e1e8e3] bg-white p-3 transition hover:border-[#c8d8ce] hover:shadow-[0_8px_20px_rgba(28,48,39,0.06)]"
                     >
                       <div className="min-w-0">
                         <p className="break-words text-sm font-semibold leading-5 text-[#2f241b]">
                           {event.title}
                         </p>
                         {event.description ? (
-                          <p className="mt-1 break-words text-xs leading-5 text-[#667265]">
+                          <p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-[#667265]">
                             {event.description}
                           </p>
                         ) : null}
-                        <div className="mt-2 flex flex-wrap gap-1.5 text-xs font-semibold text-[#526052]">
-                          <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1">
+                        <div className="mt-2 flex flex-wrap gap-1.5 text-xs font-semibold text-[#52685e]">
+                          <span className="rounded-full bg-[#f1f5f2] px-2.5 py-1">
                             {event.template.fields.length} fields
                           </span>
                           {event.eventDate ? (
-                            <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1">
+                            <span className="rounded-full bg-[#f1f5f2] px-2.5 py-1">
                               {event.eventDate}
                             </span>
                           ) : null}
                           {eventRole ? (
-                            <span className="rounded-md border border-[#d8dfd2] bg-[#fafbf8] px-2 py-1">
+                            <span className="rounded-full bg-[#f1f5f2] px-2.5 py-1">
                               {EVENT_ROLE_LABELS[eventRole]}
                             </span>
                           ) : null}
@@ -2185,7 +2169,7 @@ export function TemplateBuilder() {
                           type="button"
                           onClick={() => loadSavedEvent(event)}
                           disabled={isDeleting}
-                          className="h-9 rounded-md border border-[#cbd5c8] px-3 text-sm font-medium text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+                          className="h-11 rounded-lg border border-[#dce5df] px-3 text-sm font-medium text-[#34463d] transition hover:bg-[#f3f7f4] disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
                         >
                           {isOwner ? "Edit" : "View"}
                         </button>
@@ -2193,14 +2177,14 @@ export function TemplateBuilder() {
                           type="button"
                           onClick={() => selectReviewEvent(event)}
                           disabled={isDeleting}
-                          className="action-primary h-9 rounded-md px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          className="action-primary h-11 rounded-lg px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
                         >
                           Review
                         </button>
                         {eventRole ? (
                           <Link
                             href={`/events/${event.id}/team`}
-                            className="inline-flex h-9 items-center justify-center rounded-md border border-[#cbd5c8] px-3 text-sm font-semibold text-[#334033] transition hover:bg-[#f3f5ef]"
+                            className="inline-flex h-11 items-center justify-center rounded-lg border border-[#dce5df] px-3 text-sm font-semibold text-[#34463d] transition hover:bg-[#f3f7f4] sm:h-9"
                           >
                             Team
                           </Link>
@@ -2210,7 +2194,7 @@ export function TemplateBuilder() {
                             type="button"
                             onClick={() => deleteSavedEvent(event)}
                             disabled={isDeleting}
-                            className="h-9 rounded-md border border-[#d9b7aa] px-3 text-sm font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="h-11 rounded-lg border border-[#d9b7aa] px-3 text-sm font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
                           >
                             {isDeleting ? "Deleting" : "Delete"}
                           </button>

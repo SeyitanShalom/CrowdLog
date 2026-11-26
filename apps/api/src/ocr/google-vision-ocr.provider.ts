@@ -551,8 +551,22 @@ export class GoogleVisionOcrProvider implements OcrProvider {
       const unmappedHeaderWords = headerRow.words.filter(
         (word) => !usedHeaderWords.has(word),
       );
+      const candidates = this.headerCandidates(unmappedHeaderWords).sort(
+        (left, right) =>
+          right.words.length - left.words.length || left.x - right.x,
+      );
+      const distinctCandidates: HeaderCandidate[] = [];
 
-      for (const candidate of this.headerCandidates(unmappedHeaderWords)) {
+      for (const candidate of candidates) {
+        if (candidate.words.some((word) => usedHeaderWords.has(word))) {
+          continue;
+        }
+
+        candidate.words.forEach((word) => usedHeaderWords.add(word));
+        distinctCandidates.push(candidate);
+      }
+
+      for (const candidate of distinctCandidates) {
         const candidateLeft = Math.min(...candidate.words.map((word) => word.x));
         const leftSlack = this.medianWordWidth(candidate.words) * 0.2;
         const sampleValues = pageRows
@@ -655,15 +669,49 @@ export class GoogleVisionOcrProvider implements OcrProvider {
   }
 
   private headerRow(fields: TemplateField[], rows: RowGroup[]) {
-    return rows
+    const candidates = rows
       .slice(0, 6)
       .map((row) => ({
         row,
         score: this.headerRowScore(fields, row.words),
       }))
-      .filter((candidate) => candidate.score > 0)
-      .sort((left, right) => right.score - left.score || left.row.y - right.row.y)
-      .map((candidate) => candidate.row)[0];
+      .sort((left, right) => right.score - left.score || left.row.y - right.row.y);
+    const matchedHeader = candidates.find((candidate) => candidate.score > 0);
+
+    if (matchedHeader) {
+      return matchedHeader.row;
+    }
+
+    return rows
+      .slice(0, 6)
+      .map((row) => ({ row, score: this.headerStyleScore(row.words) }))
+      .sort((left, right) => right.score - left.score || left.row.y - right.row.y)[0]
+      ?.row ?? rows[0];
+  }
+
+  private headerStyleScore(words: VisionWord[]) {
+    let score = Math.min(words.length, 5) * 0.25;
+
+    for (const word of words) {
+      const text = word.text.trim();
+      const letters = text.match(/[A-Za-z]/g) ?? [];
+
+      if (letters.length === 0) {
+        continue;
+      }
+
+      const uppercaseLetters = letters.filter(
+        (letter) => letter === letter.toUpperCase(),
+      ).length;
+
+      if (uppercaseLetters / letters.length >= 0.85 && !/\d/.test(text)) {
+        score += 2;
+      } else if (/\d/.test(text)) {
+        score -= 1;
+      }
+    }
+
+    return score;
   }
 
   private headerRowScore(fields: TemplateField[], words: VisionWord[]) {
@@ -998,7 +1046,7 @@ export class GoogleVisionOcrProvider implements OcrProvider {
       return "email";
     }
 
-    if (uniqueValues.size > 1 && uniqueValues.size <= 8) {
+    if (uniqueValues.size > 1 && uniqueValues.size < 8) {
       return "select";
     }
 

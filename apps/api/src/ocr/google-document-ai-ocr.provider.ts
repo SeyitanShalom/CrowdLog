@@ -565,7 +565,11 @@ export class GoogleDocumentAiOcrProvider implements OcrProvider {
   ): TableSuggestionSource[] {
     const headerCells = this.firstTableRowCells(table.headerRows);
     const mappings = this.headerMappings(fields, headerCells, documentText);
-    const mappedColumns = new Set(mappings.map((mapping) => mapping.columnIndex));
+    const mappedColumns = new Set(
+      mappings
+        .filter((mapping) => mapping.headerText !== null)
+        .map((mapping) => mapping.columnIndex),
+    );
     const bodyRows = arrayOfObjects<GoogleTableRow>(table.bodyRows);
 
     return headerCells
@@ -723,7 +727,7 @@ export class GoogleDocumentAiOcrProvider implements OcrProvider {
       return "email";
     }
 
-    if (uniqueValues.size > 1 && uniqueValues.size <= 8) {
+    if (uniqueValues.size > 1 && uniqueValues.size < 8) {
       return "select";
     }
 

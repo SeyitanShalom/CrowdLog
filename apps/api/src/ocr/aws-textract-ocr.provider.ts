@@ -20,6 +20,7 @@ import {
   normalizeOcrCellValue,
   normalizeOcrTerm,
 } from "./ocr-value-normalization";
+import { detectOcrTableHeaderRowIndex } from "./table-header";
 
 const AWS_ALGORITHM = "AWS4-HMAC-SHA256";
 const AWS_SERVICE = "textract";
@@ -277,7 +278,7 @@ export class AwsTextractOcrProvider implements OcrProvider {
       const cells = this.relatedBlocks(table, blockMap, "CHILD").filter(
         (block) => block.BlockType === "CELL",
       );
-      const headerRowIndex = this.headerRowIndex(cells);
+      const headerRowIndex = this.headerRowIndex(cells, fields, blockMap);
       const mappings = this.headerMappings(fields, cells, headerRowIndex, blockMap);
       const dataRowIndexes = uniqueNumbers(
         cells
@@ -422,7 +423,11 @@ export class AwsTextractOcrProvider implements OcrProvider {
       .sort((left, right) => left.score - right.score)[0];
   }
 
-  private headerRowIndex(cells: AwsTextractBlock[]) {
+  private headerRowIndex(
+    cells: AwsTextractBlock[],
+    fields: TemplateField[],
+    blockMap: Map<string, AwsTextractBlock>,
+  ) {
     const headerIndexes = cells
       .filter((cell) => stringArray(cell.EntityTypes).includes("COLUMN_HEADER"))
       .map((cell) => integerValue(cell.RowIndex))
@@ -432,11 +437,31 @@ export class AwsTextractOcrProvider implements OcrProvider {
       return Math.min(...headerIndexes);
     }
 
-    const rowIndexes = cells
-      .map((cell) => integerValue(cell.RowIndex))
-      .filter((rowIndex): rowIndex is number => rowIndex !== null);
+    const indexedCells = cells
+      .map((cell) => ({
+        rowIndex: integerValue(cell.RowIndex),
+        columnIndex: integerValue(cell.ColumnIndex),
+        text: this.blockText(cell, blockMap),
+      }))
+      .filter(
+        (cell): cell is {
+          rowIndex: number;
+          columnIndex: number;
+          text: string;
+        } => cell.rowIndex !== null && cell.columnIndex !== null,
+      );
+    const detectedHeaderRowIndex = detectOcrTableHeaderRowIndex(
+      indexedCells,
+      fields,
+      (text, field) => this.fieldMatchScore(text, field),
+      MAX_HEADER_MATCH_SCORE,
+    );
+    const rowIndexes = indexedCells.map((cell) => cell.rowIndex);
 
-    return rowIndexes.length > 0 ? Math.min(...rowIndexes) : 1;
+    return (
+      detectedHeaderRowIndex ??
+      (rowIndexes.length > 0 ? Math.min(...rowIndexes) : 1)
+    );
   }
 
   private headerMappings(
@@ -612,9 +637,13 @@ export class AwsTextractOcrProvider implements OcrProvider {
     const cells = this.relatedBlocks(table, blockMap, "CHILD").filter(
       (block) => block.BlockType === "CELL",
     );
-    const headerRowIndex = this.headerRowIndex(cells);
+    const headerRowIndex = this.headerRowIndex(cells, fields, blockMap);
     const mappings = this.headerMappings(fields, cells, headerRowIndex, blockMap);
-    const mappedColumns = new Set(mappings.map((mapping) => mapping.columnIndex));
+    const mappedColumns = new Set(
+      mappings
+        .filter((mapping) => mapping.headerText !== null)
+        .map((mapping) => mapping.columnIndex),
+    );
     const dataRowIndexes = uniqueNumbers(
       cells
         .map((cell) => integerValue(cell.RowIndex))
@@ -826,7 +855,7 @@ export class AwsTextractOcrProvider implements OcrProvider {
       return "email";
     }
 
-    if (uniqueValues.size > 1 && uniqueValues.size <= 8) {
+    if (uniqueValues.size > 1 && uniqueValues.size < 8) {
       return "select";
     }
 

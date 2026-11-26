@@ -81,7 +81,7 @@ export class WindowsOcrProvider implements OcrProvider {
     }
 
     const columns = this.resolveColumns(input.template.fields, ocr.words);
-    const bodyRows = this.groupBodyWords(ocr.words);
+    const bodyRows = this.groupBodyWords(ocr.words, input.template.fields);
     const rows = this.buildRows(columns, bodyRows, input);
     const suggestedFields = this.buildFieldSuggestions(
       input.template.fields,
@@ -582,7 +582,7 @@ export class WindowsOcrProvider implements OcrProvider {
   }
 
   private resolveColumns(fields: TemplateField[], words: WindowsOcrWord[]) {
-    const headerCandidates = this.buildHeaderCandidates(words);
+    const headerCandidates = this.buildHeaderCandidates(words, fields);
     const matches: Array<{
       field: TemplateField;
       candidate: HeaderCandidate;
@@ -610,7 +610,11 @@ export class WindowsOcrProvider implements OcrProvider {
 
     const mappedColumns = new Map<string, OcrColumn>();
     const usedHeaderWords = new Set<WindowsOcrWord>();
-    const fallbackColumnXs = this.estimateFallbackColumnXs(fields.length, words);
+    const fallbackColumnXs = this.estimateFallbackColumnXs(
+      fields.length,
+      words,
+      fields,
+    );
 
     for (const match of matches) {
       if (
@@ -643,8 +647,8 @@ export class WindowsOcrProvider implements OcrProvider {
     );
   }
 
-  private groupBodyWords(words: WindowsOcrWord[]) {
-    const headerBottom = this.headerBottom(words);
+  private groupBodyWords(words: WindowsOcrWord[], fields: TemplateField[] = []) {
+    const headerBottom = this.headerBottom(words, fields);
     const sortedWords = words
       .filter(
         (word) =>
@@ -663,23 +667,53 @@ export class WindowsOcrProvider implements OcrProvider {
   ): OcrSuggestedField[] {
     const suggestions: OcrSuggestedField[] = [];
     const existingKeys = fields.map((field) => field.key);
-    const headerWords = this.headerWords(words);
+    const headerCandidates = this.buildHeaderCandidates(words, fields).sort(
+      (left, right) =>
+        right.words.length - left.words.length || left.x - right.x,
+    );
+    const usedHeaderWords = new Set<WindowsOcrWord>();
 
-    for (const x of DEFAULT_COLUMN_X) {
-      if (mappedColumns.some((column) => Math.abs(column.x - x) <= 20)) {
+    for (const column of mappedColumns) {
+      if (!column.headerText) {
         continue;
       }
 
-      const sampleValues = this.sampleColumnValues(bodyRows, x);
+      const mappedCandidate = headerCandidates.find(
+        (candidate) =>
+          normalizeOcrTerm(candidate.text) ===
+            normalizeOcrTerm(column.headerText ?? "") &&
+          Math.abs(candidate.x - column.x) <= MAX_COLUMN_DISTANCE,
+      );
+
+      mappedCandidate?.words.forEach((word) => usedHeaderWords.add(word));
+    }
+
+    const unmappedCandidates: HeaderCandidate[] = [];
+
+    for (const candidate of headerCandidates) {
+      if (candidate.words.some((word) => usedHeaderWords.has(word))) {
+        continue;
+      }
+
+      candidate.words.forEach((word) => usedHeaderWords.add(word));
+      unmappedCandidates.push(candidate);
+    }
+
+    const headerXs = unmappedCandidates.map((candidate) => candidate.x);
+
+    for (const candidate of unmappedCandidates) {
+      const x = candidate.x;
+      const sampleValues = this.sampleColumnValues(bodyRows, x, headerXs);
 
       if (sampleValues.length < 2) {
         continue;
       }
 
-      const header = headerWords.find(
-        (word) => Math.abs(this.centerX(word) - x) <= MAX_COLUMN_DISTANCE,
+      const inferred = this.inferSuggestedField(
+        candidate.text,
+        sampleValues,
+        x,
       );
-      const inferred = this.inferSuggestedField(header?.text, sampleValues, x);
 
       if (!inferred) {
         continue;
@@ -704,11 +738,25 @@ export class WindowsOcrProvider implements OcrProvider {
     return suggestions;
   }
 
-  private sampleColumnValues(bodyRows: WindowsOcrWord[][], x: number) {
+  private sampleColumnValues(
+    bodyRows: WindowsOcrWord[][],
+    x: number,
+    columnXs: number[],
+  ) {
+    const gaps = columnXs
+      .filter((columnX) => columnX !== x)
+      .map((columnX) => Math.abs(columnX - x))
+      .filter((gap) => gap > 0)
+      .sort((left, right) => left - right);
+    const distanceLimit = gaps.length
+      ? Math.min(140, Math.max(42, gaps[0] * 0.55))
+      : MAX_COLUMN_DISTANCE;
     const values = bodyRows
       .map((row) =>
         this.toCellValue(
-          row.filter((word) => Math.abs(this.centerX(word) - x) <= 40),
+          row.filter(
+            (word) => Math.abs(this.centerX(word) - x) <= distanceLimit,
+          ),
         ),
       )
       .filter(Boolean);
@@ -786,7 +834,7 @@ export class WindowsOcrProvider implements OcrProvider {
   private inferFieldType(sampleValues: string[]): OcrSuggestedFieldType {
     const uniqueValues = new Set(sampleValues.map((value) => value.toLowerCase()));
 
-    if (uniqueValues.size > 1 && uniqueValues.size <= 8) {
+    if (uniqueValues.size > 1 && uniqueValues.size < 8) {
       return "select";
     }
 
@@ -1360,8 +1408,14 @@ export class WindowsOcrProvider implements OcrProvider {
     return bestScore;
   }
 
-  private buildHeaderCandidates(words: WindowsOcrWord[]) {
-    const headerWords = this.headerWords(words);
+  private buildHeaderCandidates(
+    words: WindowsOcrWord[],
+    fields: TemplateField[] = [],
+  ) {
+    return this.headerCandidatesFromWords(this.headerWords(words, fields));
+  }
+
+  private headerCandidatesFromWords(headerWords: WindowsOcrWord[]) {
     const candidates: HeaderCandidate[] = [];
 
     for (let start = 0; start < headerWords.length; start += 1) {
@@ -1393,7 +1447,7 @@ export class WindowsOcrProvider implements OcrProvider {
     return candidates;
   }
 
-  private headerWords(words: WindowsOcrWord[]) {
+  private headerWords(words: WindowsOcrWord[], fields: TemplateField[] = []) {
     const usableWords = words
       .filter((word) => this.isUsableWord(word) && word.x >= 25)
       .sort((left, right) => left.y - right.y || left.x - right.x);
@@ -1401,18 +1455,91 @@ export class WindowsOcrProvider implements OcrProvider {
       usableWords,
       this.rowTolerance(usableWords),
     );
-    const headerRow = rows
-      .slice(0, 4)
+    const candidates = rows.slice(0, 8);
+
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    if (fields.length > 0) {
+      const matchingRows = candidates
+        .map((row) => {
+          const headerCandidates = this.headerCandidatesFromWords(row);
+          const scores = fields
+            .map((field) =>
+              headerCandidates
+                .map((candidate) =>
+                  this.headerMatchScore(candidate.text, field),
+                )
+                .filter(
+                  (score): score is number =>
+                    score !== null && score <= MAX_HEADER_MATCH_SCORE,
+                )
+                .sort((left, right) => left - right)[0],
+            )
+            .filter((score): score is number => score !== undefined);
+
+          return {
+            row,
+            matchCount: scores.length,
+            totalScore: scores.reduce((sum, score) => sum + score, 0),
+          };
+        })
+        .sort(
+          (left, right) =>
+            right.matchCount - left.matchCount ||
+            left.totalScore - right.totalScore ||
+            this.averageY(left.row) - this.averageY(right.row),
+        );
+
+      if (matchingRows[0]?.matchCount) {
+        return [...matchingRows[0].row].sort((left, right) => left.x - right.x);
+      }
+    }
+
+    const styledRows = candidates
+      .map((row) => ({ row, score: this.headerStyleScore(row) }))
       .sort(
         (left, right) =>
-          right.length - left.length || this.averageY(left) - this.averageY(right),
-      )[0];
+          right.score - left.score ||
+          this.averageY(left.row) - this.averageY(right.row),
+      );
+    const bestStyledRow = styledRows[0];
+    const headerRow =
+      bestStyledRow && bestStyledRow.score > 0
+        ? bestStyledRow.row
+        : (candidates[0] ?? []);
 
-    return headerRow ? [...headerRow].sort((left, right) => left.x - right.x) : [];
+    return [...headerRow].sort((left, right) => left.x - right.x);
   }
 
-  private headerBottom(words: WindowsOcrWord[]) {
-    const headerWords = this.headerWords(words);
+  private headerStyleScore(words: WindowsOcrWord[]) {
+    let score = Math.min(words.length, 5) * 0.25;
+
+    for (const word of words) {
+      const text = word.text.trim();
+      const letters = text.match(/[A-Za-z]/g) ?? [];
+
+      if (letters.length === 0) {
+        continue;
+      }
+
+      const uppercaseLetters = letters.filter(
+        (letter) => letter === letter.toUpperCase(),
+      ).length;
+
+      if (uppercaseLetters / letters.length >= 0.85 && !/\d/.test(text)) {
+        score += 2;
+      } else if (/\d/.test(text)) {
+        score -= 1;
+      }
+    }
+
+    return score;
+  }
+
+  private headerBottom(words: WindowsOcrWord[], fields: TemplateField[] = []) {
+    const headerWords = this.headerWords(words, fields);
 
     if (headerWords.length === 0) {
       return 26;
@@ -1586,8 +1713,12 @@ export class WindowsOcrProvider implements OcrProvider {
     } satisfies Prisma.InputJsonObject;
   }
 
-  private estimateFallbackColumnXs(fieldCount: number, words: WindowsOcrWord[]) {
-    const headerCenters = this.headerWords(words)
+  private estimateFallbackColumnXs(
+    fieldCount: number,
+    words: WindowsOcrWord[],
+    fields: TemplateField[],
+  ) {
+    const headerCenters = this.headerWords(words, fields)
       .map((word) => this.centerX(word))
       .sort((left, right) => left - right);
 

@@ -160,21 +160,47 @@ export function ReviewWorkspace({
     };
   }
 
+  if (!reviewEvent) {
+    return (
+      <section
+        id="portfolio-review-workspace"
+        className="glass-panel scroll-mt-28 overflow-hidden rounded-xl lg:scroll-mt-5"
+      >
+        <div className="panel-head flex items-start gap-3 px-4 py-4 sm:px-5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#eaf4ef] text-xs font-bold text-[#28644f]">
+            03
+          </span>
+          <div>
+            <h2 className="text-base font-semibold text-[#1f2d28]">
+              Review attendance
+            </h2>
+            <p className="mt-0.5 text-sm leading-5 text-[#68776f]">
+              Choose Review on a saved event to upload a sheet and manage its records.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section
       id="portfolio-review-workspace"
-      className="glass-panel motion-rise-delay-2 scroll-mt-5 overflow-hidden rounded-lg"
+      className="glass-panel motion-rise-delay-2 scroll-mt-28 overflow-hidden rounded-xl lg:scroll-mt-5"
     >
       <div className="panel-head flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-        <div>
-          <h2 className="text-lg font-semibold text-[#2f241b]">
-            Review extracted records
-          </h2>
-          <p className="mt-1 text-sm text-[#5f7370]">
-            {reviewEvent
-              ? reviewEvent.title
-              : "Select a saved event to begin review."}
-          </p>
+        <div className="flex items-start gap-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#eaf4ef] text-xs font-bold text-[#28644f]">
+            03
+          </span>
+          <div>
+            <h2 className="text-base font-semibold text-[#1f2d28]">
+              Review records
+            </h2>
+            <p className="mt-0.5 text-sm text-[#68776f]">
+              {reviewEvent.title}
+            </p>
+          </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           {selectedDocument ? (
@@ -234,7 +260,7 @@ export function ReviewWorkspace({
             type="button"
             onClick={() => onMockExtract(extractionOptions())}
             disabled={!reviewEvent || isMockExtracting}
-            className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            className="action-primary h-11 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isMockExtracting
               ? selectedDocument
@@ -246,6 +272,25 @@ export function ReviewWorkspace({
           </button>
         </div>
       </div>
+
+      <nav
+        aria-label="Review sections"
+        className="flex gap-2 overflow-x-auto border-b border-[#e3e9e5] px-3 py-2.5 lg:hidden"
+      >
+        {[
+          { href: "#portfolio-document-extraction", label: "Files" },
+          { href: "#portfolio-reporting-panels", label: "Overview" },
+          { href: "#portfolio-review-records", label: "Records" },
+        ].map((item) => (
+          <a
+            key={item.href}
+            href={item.href}
+            className="inline-flex h-10 shrink-0 items-center justify-center rounded-full border border-[#dce5df] bg-white px-4 text-xs font-semibold text-[#52685e] hover:bg-[#f7faf8]"
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
 
       <div className="grid gap-4 px-4 py-4 sm:px-5 xl:grid-cols-[340px_minmax(0,1fr)]">
         <div className="space-y-4">
@@ -284,7 +329,11 @@ export function ReviewWorkspace({
 
         <div className="min-w-0">
           <div className="mb-3 grid gap-3">
-            <div className="flex flex-wrap gap-2 text-xs font-semibold text-[#3b4a3b]">
+            <div
+              role="group"
+              aria-label="Review summary"
+              className="review-table-scroll flex gap-2 overflow-x-auto pb-1 text-xs font-semibold text-[#3b4a3b]"
+            >
               <SummaryPill label="Rows" value={String(reviewCounts.total)} />
               <SummaryPill
                 label="Visible"
@@ -321,7 +370,7 @@ export function ReviewWorkspace({
 
             <div
               id="portfolio-export-actions"
-              className="scroll-mt-5 grid gap-2 xl:grid-cols-[minmax(220px,1fr)_180px_auto]"
+              className="scroll-mt-28 grid gap-2 lg:scroll-mt-5 xl:grid-cols-[minmax(220px,1fr)_180px_auto]"
             >
               <label className="grid gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
                 Search
@@ -356,7 +405,7 @@ export function ReviewWorkspace({
                   type="button"
                   onClick={onExportExcel}
                   disabled={!reviewEvent || records.length === 0 || isExportingExcel}
-                  className="action-primary h-10 rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  className="action-primary h-11 w-full rounded-md px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                 >
                   {isExportingExcel ? "Exporting" : "Export Excel"}
                 </button>
@@ -423,7 +472,10 @@ export function ReviewWorkspace({
             </div>
           ) : null}
 
-          <div className="max-h-[62vh] overflow-auto rounded-lg border border-[#cfe0dc] bg-white/75 shadow-[0_14px_34px_rgba(124,69,32,0.08)] lg:max-h-[calc(100vh-18rem)]">
+          <div
+            id="portfolio-review-records"
+            className="review-table-scroll scroll-mt-28 max-h-[62vh] overflow-auto rounded-lg border border-[#cfe0dc] bg-white/75 shadow-[0_14px_34px_rgba(124,69,32,0.08)] lg:max-h-[calc(100vh-18rem)] lg:scroll-mt-5"
+          >
             <table className="min-w-full border-collapse bg-white/78 text-sm">
               <thead className="sticky top-0 z-10 bg-[#eaf6f2] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#5f7370] shadow-[0_1px_0_#dfe4dc]">
                 <tr>
@@ -518,7 +570,7 @@ export function ReviewWorkspace({
                               type="button"
                               onClick={() => onSave(record)}
                               disabled={isBusy}
-                              className="h-9 rounded-md border border-[#cbd5c8] px-3 text-xs font-semibold text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50"
+                              className="h-11 rounded-md border border-[#cbd5c8] px-3 text-xs font-semibold text-[#334033] transition hover:bg-[#f3f5ef] disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
                             >
                               Save
                             </button>
@@ -526,7 +578,7 @@ export function ReviewWorkspace({
                               type="button"
                               onClick={() => onApprove(record)}
                               disabled={isBusy}
-                              className="action-primary h-9 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              className="action-primary h-11 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
                             >
                               Approve
                             </button>
@@ -534,7 +586,7 @@ export function ReviewWorkspace({
                               type="button"
                               onClick={() => onReject(record)}
                               disabled={isBusy}
-                              className="h-9 rounded-md border border-[#d9b7aa] px-3 text-xs font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50"
+                              className="h-11 rounded-md border border-[#d9b7aa] px-3 text-xs font-semibold text-[#8a3d2d] transition hover:bg-[#fff1ed] disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
                             >
                               Reject
                             </button>
@@ -585,7 +637,7 @@ function DocumentUploadPanel({
   return (
     <div
       id="portfolio-document-extraction"
-      className="soft-card scroll-mt-5 rounded-lg p-4"
+      className="soft-card scroll-mt-28 rounded-lg p-4 lg:scroll-mt-5"
     >
       <div className="mb-3">
         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#667265]">
@@ -1235,7 +1287,7 @@ function ReportingDashboard({
   return (
     <div
       id="portfolio-reporting-panels"
-      className="scroll-mt-5 grid gap-3 xl:grid-cols-2 2xl:grid-cols-3"
+      className="scroll-mt-28 grid gap-3 lg:scroll-mt-5 xl:grid-cols-2 2xl:grid-cols-3"
     >
       <section className="soft-card rounded-md p-3">
         <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#667265]">
@@ -1472,19 +1524,9 @@ function StatusBadge({ status }: { status: RecordStatus }) {
 
 function SummaryPill({ label, value }: { label: string; value: string }) {
   return (
-    <span className="rounded-md border border-[#fed7aa] bg-white/70 px-2.5 py-1 shadow-sm">
+    <span className="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md border border-[#fed7aa] bg-white/70 px-2.5 shadow-sm">
       {label}: {value}
     </span>
   );
 }
 
-export function SummaryItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric-card rounded-lg p-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#667265]">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-semibold text-[#2f241b]">{value}</p>
-    </div>
-  );
-}

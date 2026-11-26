@@ -1,13 +1,14 @@
 "use client";
 
 type WebsiteHelpDialogProps = {
+  hasReviewEvent?: boolean;
   onClose: () => void;
 };
 
 const helpSections = [
   {
     title: "Start with the event builder",
-    body: "Use the Event panel to name the attendance event, add a date, and describe what the sheet is for. Use Attendance template to add the fields you want the extracted records to contain.",
+    body: "Use Event details to name the attendance event, add a date, and describe what the sheet is for. Use Attendance template to add the fields you want the extracted records to contain.",
   },
   {
     title: "Build the attendance template",
@@ -15,7 +16,7 @@ const helpSections = [
   },
   {
     title: "Save and reopen events",
-    body: "After signing in, save the event template. Saved events appear in the right panel, where you can edit, review, open the team page, or delete owner-managed events.",
+    body: "After signing in, save the event template. Saved events appear in the Saved events panel, where you can edit, review, open the team page, or delete owner-managed events.",
   },
   {
     title: "Upload and extract documents",
@@ -35,16 +36,26 @@ const helpSections = [
   },
 ];
 
-const jumpTargets = [
+const baseJumpTargets = [
   { id: "portfolio-template-builder", label: "Builder" },
-  { id: "portfolio-template-summary", label: "Summary" },
   { id: "portfolio-saved-events", label: "Saved events" },
+  { id: "portfolio-review-workspace", label: "Review" },
+];
+
+const reviewJumpTargets = [
   { id: "portfolio-document-extraction", label: "Documents" },
   { id: "portfolio-reporting-panels", label: "Reports" },
   { id: "portfolio-export-actions", label: "Exports" },
 ];
 
-export function WebsiteHelpDialog({ onClose }: WebsiteHelpDialogProps) {
+export function WebsiteHelpDialog({
+  hasReviewEvent = false,
+  onClose,
+}: WebsiteHelpDialogProps) {
+  const jumpTargets = hasReviewEvent
+    ? [...baseJumpTargets, ...reviewJumpTargets]
+    : baseJumpTargets;
+
   function jumpToSection(targetId: string) {
     const target = document.getElementById(targetId);
 
@@ -54,7 +65,15 @@ export function WebsiteHelpDialog({ onClose }: WebsiteHelpDialogProps) {
         block: "start",
       });
     } else {
-      window.location.href = `/#${targetId}`;
+      const reviewWorkspace = document.getElementById(
+        "portfolio-review-workspace",
+      );
+
+      if (reviewWorkspace) {
+        reviewWorkspace.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        window.location.href = `/#${targetId}`;
+      }
     }
 
     onClose();

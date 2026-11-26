@@ -37,7 +37,7 @@ export function AuthPanel({
 
   if (isLoadingSession) {
     return (
-      <div className="rounded-md border border-[#fed7aa] bg-white/60 px-3 py-2 text-sm font-medium text-[#6f6359] shadow-sm">
+      <div className="rounded-lg border border-[#dce5df] bg-white px-3 py-2 text-sm font-medium text-[#68776f]">
         Checking session...
       </div>
     );
@@ -45,25 +45,20 @@ export function AuthPanel({
 
   if (currentUser) {
     return (
-      <div className="flex flex-col gap-2 rounded-lg border border-[#fed7aa] bg-white/60 p-2 shadow-sm backdrop-blur-xl sm:flex-row sm:items-center">
-        <div className="min-w-0 text-sm">
-          <span className="block truncate font-semibold text-[#2f241b]">
+      <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#dce5df] bg-white p-1.5 sm:gap-3 sm:p-2">
+        <div className="min-w-0 flex-1 text-xs sm:text-sm">
+          <span className="block truncate font-semibold text-[#26362f]">
             {currentUser.name || currentUser.email}
           </span>
-          <span className="block truncate text-xs text-[#5f7370]">
+          <span className="hidden truncate text-xs text-[#68776f] sm:block">
             {currentUser.email}
           </span>
-          {currentUser.phone ? (
-            <span className="block truncate text-xs text-[#5f7370]">
-              {currentUser.phone}
-            </span>
-          ) : null}
         </div>
         <button
           type="button"
           onClick={onSignOut}
           disabled={isSigningIn}
-          className="h-9 rounded-md border border-[#fed7aa] bg-white/70 px-3 text-xs font-semibold text-[#70411d] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-10 shrink-0 rounded-lg border border-[#dce5df] bg-white px-2.5 text-xs font-semibold text-[#52685e] transition hover:bg-[#f5f8f6] disabled:cursor-not-allowed disabled:opacity-50 sm:px-3"
         >
           Sign out
         </button>
@@ -80,7 +75,7 @@ export function AuthPanel({
           onAuthStatusReset();
           setIsAuthModalOpen(true);
         }}
-        className="action-primary h-9 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+        className="action-primary h-10 rounded-md px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
         Sign in
       </button>
