@@ -80,7 +80,7 @@ export function detectOcrTableHeaderRowIndex(
           left.rowIndex - right.rowIndex,
       );
 
-    if (matchingRows[0]?.matchCount) {
+    if (matchingRows[0]?.matchCount && matchingRows[0].headerScore > 0) {
       return matchingRows[0].rowIndex;
     }
   }

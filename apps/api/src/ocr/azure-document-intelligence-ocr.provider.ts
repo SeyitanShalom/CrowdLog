@@ -59,6 +59,24 @@ type AzureTableCell = {
   boundingRegions?: unknown;
 };
 
+type AzurePage = {
+  pageNumber?: unknown;
+  words?: unknown;
+};
+
+type AzurePageWord = {
+  content?: unknown;
+  polygon?: unknown;
+};
+
+type PositionedAzureWord = {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type AzureKeyValuePair = {
   key?: unknown;
   value?: unknown;
@@ -286,7 +304,17 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
 
     for (const table of tables) {
       const cells = arrayOfObjects<AzureTableCell>(table.cells);
-      const detectedHeaderRowIndex = this.detectHeaderRowIndex(cells, fields);
+      const detectedTableHeaderRowIndex = this.detectHeaderRowIndex(
+        cells,
+        fields,
+      );
+      const externalHeaderCells =
+        detectedTableHeaderRowIndex === null
+          ? this.externalHeaderCells(analyzeResult, table, cells, fields)
+          : null;
+      const detectedHeaderRowIndex = externalHeaderCells
+        ? -1
+        : detectedTableHeaderRowIndex;
       const rowIndexes = cells
         .map((cell) => integerValue(cell.rowIndex))
         .filter((rowIndex): rowIndex is number => rowIndex !== null);
@@ -300,7 +328,11 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
         reusePreviousHeader = true;
         mappings = previousHeaderMappings;
       } else {
-        mappings = this.headerMappings(fields, cells, headerRowIndex);
+        mappings = this.headerMappings(
+          fields,
+          externalHeaderCells ?? cells,
+          headerRowIndex,
+        );
         previousHeaderMappings = mappings;
       }
 
@@ -581,7 +613,11 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
     const takenKeys = new Set(fields.map((field) => field.key));
 
     for (const table of arrayOfObjects<AzureTable>(analyzeResult.tables)) {
-      for (const source of this.unmappedHeaderSources(fields, table)) {
+      for (const source of this.unmappedHeaderSources(
+        fields,
+        table,
+        analyzeResult,
+      )) {
         const key = this.dedupeFieldKey(
           this.normalizeFieldKey(source.headerText),
           takenKeys,
@@ -606,13 +642,205 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
     return suggestions;
   }
 
+  private externalHeaderCells(
+    analyzeResult: AzureAnalyzeResult,
+    table: AzureTable,
+    cells: AzureTableCell[],
+    fields: TemplateField[],
+  ) {
+    const rowIndexes = cells
+      .map((cell) => integerValue(cell.rowIndex))
+      .filter((rowIndex): rowIndex is number => rowIndex !== null);
+
+    if (rowIndexes.length === 0) {
+      return null;
+    }
+
+    const firstBodyRowIndex = Math.min(...rowIndexes);
+    const columns = cells
+      .filter((cell) => integerValue(cell.rowIndex) === firstBodyRowIndex)
+      .map((cell) => {
+        const columnIndex = integerValue(cell.columnIndex);
+        const box = toBoundingBox(cell);
+
+        if (
+          columnIndex === null ||
+          !isPlainObject(box) ||
+          typeof box.x !== "number" ||
+          typeof box.y !== "number" ||
+          typeof box.width !== "number" ||
+          typeof box.height !== "number"
+        ) {
+          return null;
+        }
+
+        return {
+          columnIndex,
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          centerX: box.x + box.width / 2,
+        };
+      })
+      .filter(
+        (
+          column,
+        ): column is {
+          columnIndex: number;
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          centerX: number;
+        } => column !== null,
+      )
+      .sort((left, right) => left.columnIndex - right.columnIndex);
+
+    if (columns.length < 2) {
+      return null;
+    }
+
+    const pageNumber =
+      this.firstSourcePage(
+        cells.filter((cell) => integerValue(cell.rowIndex) === firstBodyRowIndex),
+      ) ?? this.firstSourcePage([table]);
+    const pageWords = arrayOfObjects<AzurePage>(analyzeResult.pages).flatMap(
+      (page) => {
+        const currentPageNumber = integerValue(page.pageNumber);
+
+        if (pageNumber !== undefined && currentPageNumber !== pageNumber) {
+          return [];
+        }
+
+        return arrayOfObjects<AzurePageWord>(page.words)
+          .map(positionedAzureWord)
+          .filter(
+            (word): word is PositionedAzureWord => word !== null,
+          );
+      },
+    );
+    const tableTop = Math.min(...columns.map((column) => column.y));
+    const tableLeft = Math.min(...columns.map((column) => column.x));
+    const tableRight = Math.max(
+      ...columns.map((column) => column.x + column.width),
+    );
+    const wordsAboveTable = pageWords.filter((word) => {
+      const centerX = word.x + word.width / 2;
+
+      return (
+        word.y + word.height <= tableTop + 1 &&
+        centerX >= tableLeft - 12 &&
+        centerX <= tableRight + 12
+      );
+    });
+    const candidateRows = groupPositionedAzureWords(wordsAboveTable).slice(-8);
+    const candidateCells = candidateRows.flatMap((row, rowIndex) => {
+      const wordsByColumn = new Map<number, PositionedAzureWord[]>();
+
+      for (const word of row) {
+        const wordCenterX = word.x + word.width / 2;
+        const nearestColumn = columns
+          .map((column) => ({
+            column,
+            distance: Math.abs(column.centerX - wordCenterX),
+          }))
+          .sort((left, right) => left.distance - right.distance)[0];
+
+        if (!nearestColumn) {
+          continue;
+        }
+
+        const columnPosition = columns.findIndex(
+          (column) => column.columnIndex === nearestColumn.column.columnIndex,
+        );
+        const adjacentGaps = [
+          columns[columnPosition - 1]
+            ? nearestColumn.column.centerX - columns[columnPosition - 1].centerX
+            : null,
+          columns[columnPosition + 1]
+            ? columns[columnPosition + 1].centerX - nearestColumn.column.centerX
+            : null,
+        ].filter((gap): gap is number => gap !== null && gap > 0);
+        const maxDistance = Math.max(
+          18,
+          Math.min(
+            90,
+            Math.max(
+              nearestColumn.column.width * 0.45,
+              adjacentGaps.length > 0 ? Math.min(...adjacentGaps) * 0.45 : 0,
+            ),
+          ),
+        );
+
+        if (nearestColumn.distance > maxDistance) {
+          continue;
+        }
+
+        const columnWords = wordsByColumn.get(
+          nearestColumn.column.columnIndex,
+        ) ?? [];
+        columnWords.push(word);
+        wordsByColumn.set(nearestColumn.column.columnIndex, columnWords);
+      }
+
+      if (wordsByColumn.size < Math.ceil(columns.length / 2)) {
+        return [];
+      }
+
+      return Array.from(wordsByColumn, ([columnIndex, words]) => ({
+        rowIndex,
+        columnIndex,
+        content: cleanOcrText(
+          words
+            .sort((left, right) => left.x - right.x)
+            .map((word) => word.text)
+            .join(" "),
+        ),
+      }));
+    });
+    const headerRowIndex = detectOcrTableHeaderRowIndex(
+      candidateCells.map((cell) => ({ ...cell, text: cell.content })),
+      fields,
+      (text, field) => this.fieldMatchScore(text, field),
+      MAX_HEADER_MATCH_SCORE,
+    );
+
+    if (headerRowIndex === null) {
+      return null;
+    }
+
+    return candidateCells
+      .filter((cell) => cell.rowIndex === headerRowIndex)
+      .map((cell) => ({
+        rowIndex: -1,
+        columnIndex: cell.columnIndex,
+        content: cell.content,
+      }));
+  }
+
   private unmappedHeaderSources(
     fields: TemplateField[],
     table: AzureTable,
+    analyzeResult: AzureAnalyzeResult,
   ): TableSuggestionSource[] {
     const cells = arrayOfObjects<AzureTableCell>(table.cells);
-    const headerRowIndex = this.headerRowIndex(cells, fields);
-    const mappings = this.headerMappings(fields, cells, headerRowIndex);
+    const detectedTableHeaderRowIndex = this.detectHeaderRowIndex(cells, fields);
+    const externalHeaderCells =
+      detectedTableHeaderRowIndex === null
+        ? this.externalHeaderCells(analyzeResult, table, cells, fields)
+        : null;
+    const headerRowIndex = externalHeaderCells
+      ? -1
+      : (detectedTableHeaderRowIndex ?? this.headerRowIndex(cells, fields));
+    const headerCells = externalHeaderCells
+      ? externalHeaderCells
+      : cells.filter((cell) => integerValue(cell.rowIndex) === headerRowIndex);
+    const mappings = this.headerMappings(
+      fields,
+      externalHeaderCells ?? cells,
+      headerRowIndex,
+    );
     const mappedColumns = new Set(
       mappings
         .filter((mapping) => mapping.headerText !== null)
@@ -622,11 +850,10 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
       cells
         .map((cell) => integerValue(cell.rowIndex))
         .filter((rowIndex): rowIndex is number => rowIndex !== null)
-        .filter((rowIndex) => rowIndex > headerRowIndex),
+        .filter((rowIndex) => externalHeaderCells || rowIndex > headerRowIndex),
     );
 
-    return cells
-      .filter((cell) => integerValue(cell.rowIndex) === headerRowIndex)
+    return headerCells
       .map((cell) => ({
         cell,
         columnIndex: integerValue(cell.columnIndex),
@@ -975,6 +1202,79 @@ function toBoundingBox(value: unknown) {
     height: Number((bottom - top).toFixed(2)),
     polygon: toJsonValue(polygon),
   } satisfies Prisma.InputJsonObject;
+}
+
+function positionedAzureWord(value: AzurePageWord): PositionedAzureWord | null {
+  const text = cleanOcrText(stringValue(value.content) ?? "");
+  const points = polygonToPoints(Array.isArray(value.polygon) ? value.polygon : []);
+
+  if (!text || points.length === 0) {
+    return null;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  const right = Math.max(...xs);
+  const bottom = Math.max(...ys);
+
+  return {
+    text,
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function groupPositionedAzureWords(words: PositionedAzureWord[]) {
+  const heights = words.map((word) => word.height).sort((left, right) => left - right);
+  const middle = Math.floor(heights.length / 2);
+  const medianHeight =
+    heights.length === 0
+      ? 8
+      : heights.length % 2 === 0
+        ? (heights[middle - 1] + heights[middle]) / 2
+        : heights[middle];
+  const tolerance = Math.min(14, Math.max(3, medianHeight * 0.75));
+  const rows: PositionedAzureWord[][] = [];
+
+  for (const word of [...words].sort(
+    (left, right) =>
+      left.y + left.height / 2 - (right.y + right.height / 2) ||
+      left.x - right.x,
+  )) {
+    const centerY = word.y + word.height / 2;
+    const row = rows.find((candidate) => {
+      const rowCenterY =
+        candidate.reduce(
+          (sum, item) => sum + item.y + item.height / 2,
+          0,
+        ) / candidate.length;
+
+      return Math.abs(rowCenterY - centerY) <= tolerance;
+    });
+
+    if (row) {
+      row.push(word);
+    } else {
+      rows.push([word]);
+    }
+  }
+
+  return rows
+    .map((row) => row.sort((left, right) => left.x - right.x))
+    .sort((left, right) => {
+      const leftCenterY =
+        left.reduce((sum, word) => sum + word.y + word.height / 2, 0) /
+        left.length;
+      const rightCenterY =
+        right.reduce((sum, word) => sum + word.y + word.height / 2, 0) /
+        right.length;
+
+      return leftCenterY - rightCenterY;
+    });
 }
 
 function polygonToPoints(polygon: unknown[]) {
