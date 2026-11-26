@@ -286,14 +286,17 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
 
     for (const table of tables) {
       const cells = arrayOfObjects<AzureTableCell>(table.cells);
-      const explicitHeaderRowIndex = this.explicitHeaderRowIndex(cells);
-      const hasExplicitHeader = explicitHeaderRowIndex !== null;
+      const detectedHeaderRowIndex = this.detectHeaderRowIndex(cells, fields);
+      const rowIndexes = cells
+        .map((cell) => integerValue(cell.rowIndex))
+        .filter((rowIndex): rowIndex is number => rowIndex !== null);
       const headerRowIndex =
-        explicitHeaderRowIndex ?? this.headerRowIndex(cells, fields);
+        detectedHeaderRowIndex ??
+        (rowIndexes.length > 0 ? Math.min(...rowIndexes) : 0);
       let reusePreviousHeader = false;
       let mappings: HeaderMapping[];
 
-      if (!hasExplicitHeader && previousHeaderMappings) {
+      if (detectedHeaderRowIndex === null && previousHeaderMappings) {
         reusePreviousHeader = true;
         mappings = previousHeaderMappings;
       } else {
@@ -410,51 +413,46 @@ export class AzureDocumentIntelligenceOcrProvider implements OcrProvider {
       .sort((left, right) => left.score - right.score)[0];
   }
 
-  private headerRowIndex(cells: AzureTableCell[], fields: TemplateField[]) {
-    const explicitHeaderRowIndex = this.explicitHeaderRowIndex(cells);
-
-    if (explicitHeaderRowIndex !== null) {
-      return explicitHeaderRowIndex;
-    }
-
+  private detectHeaderRowIndex(
+    cells: AzureTableCell[],
+    fields: TemplateField[],
+  ) {
     const indexedCells = cells
       .map((cell) => ({
         rowIndex: integerValue(cell.rowIndex),
         columnIndex: integerValue(cell.columnIndex),
         text: cleanOcrText(stringValue(cell.content) ?? ""),
+        isExplicitHeader: cell.kind === "columnHeader",
       }))
       .filter(
         (cell): cell is {
           rowIndex: number;
           columnIndex: number;
           text: string;
+          isExplicitHeader: boolean;
         } => cell.rowIndex !== null && cell.columnIndex !== null,
       );
-    const detectedHeaderRowIndex = detectOcrTableHeaderRowIndex(
+
+    return detectOcrTableHeaderRowIndex(
       indexedCells,
       fields,
       (text, field) => this.fieldMatchScore(text, field),
       MAX_HEADER_MATCH_SCORE,
     );
-    const rowIndexes = indexedCells.map((cell) => cell.rowIndex);
-
-    return (
-      detectedHeaderRowIndex ??
-      (rowIndexes.length > 0 ? Math.min(...rowIndexes) : 0)
-    );
   }
 
-  private explicitHeaderRowIndex(cells: AzureTableCell[]) {
-    const headerIndexes = cells
-      .filter((cell) => cell.kind === "columnHeader")
+  private headerRowIndex(cells: AzureTableCell[], fields: TemplateField[]) {
+    const detectedHeaderRowIndex = this.detectHeaderRowIndex(cells, fields);
+
+    if (detectedHeaderRowIndex !== null) {
+      return detectedHeaderRowIndex;
+    }
+
+    const rowIndexes = cells
       .map((cell) => integerValue(cell.rowIndex))
       .filter((rowIndex): rowIndex is number => rowIndex !== null);
 
-    if (headerIndexes.length > 0) {
-      return Math.min(...headerIndexes);
-    }
-
-    return null;
+    return rowIndexes.length > 0 ? Math.min(...rowIndexes) : 0;
   }
 
   private headerMappings(

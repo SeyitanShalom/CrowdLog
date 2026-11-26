@@ -428,26 +428,21 @@ export class AwsTextractOcrProvider implements OcrProvider {
     fields: TemplateField[],
     blockMap: Map<string, AwsTextractBlock>,
   ) {
-    const headerIndexes = cells
-      .filter((cell) => stringArray(cell.EntityTypes).includes("COLUMN_HEADER"))
-      .map((cell) => integerValue(cell.RowIndex))
-      .filter((rowIndex): rowIndex is number => rowIndex !== null);
-
-    if (headerIndexes.length > 0) {
-      return Math.min(...headerIndexes);
-    }
-
     const indexedCells = cells
       .map((cell) => ({
         rowIndex: integerValue(cell.RowIndex),
         columnIndex: integerValue(cell.ColumnIndex),
         text: this.blockText(cell, blockMap),
+        isExplicitHeader: stringArray(cell.EntityTypes).includes(
+          "COLUMN_HEADER",
+        ),
       }))
       .filter(
         (cell): cell is {
           rowIndex: number;
           columnIndex: number;
           text: string;
+          isExplicitHeader: boolean;
         } => cell.rowIndex !== null && cell.columnIndex !== null,
       );
     const detectedHeaderRowIndex = detectOcrTableHeaderRowIndex(

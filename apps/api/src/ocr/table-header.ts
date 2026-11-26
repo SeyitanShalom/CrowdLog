@@ -13,14 +13,6 @@ export function detectOcrTableHeaderRowIndex(
   scoreFieldMatch: (text: string, field: TemplateField) => number | null,
   maxMatchScore: number,
 ) {
-  const explicitHeaderRows = cells
-    .filter((cell) => cell.isExplicitHeader)
-    .map((cell) => cell.rowIndex);
-
-  if (explicitHeaderRows.length > 0) {
-    return Math.min(...explicitHeaderRows);
-  }
-
   const rows = Array.from(
     cells.reduce((grouped, cell) => {
       const row = grouped.get(cell.rowIndex) ?? [];
@@ -71,11 +63,19 @@ export function detectOcrTableHeaderRowIndex(
           matchCount += 1;
         }
 
-        return { ...row, matchCount, totalScore };
+        return {
+          ...row,
+          matchCount,
+          totalScore,
+          headerScore:
+            headerLikeScore(row.cells) +
+            (row.cells.some((cell) => cell.isExplicitHeader) ? 0.75 : 0),
+        };
       })
       .sort(
         (left, right) =>
           right.matchCount - left.matchCount ||
+          right.headerScore - left.headerScore ||
           left.totalScore - right.totalScore ||
           left.rowIndex - right.rowIndex,
       );
@@ -86,7 +86,12 @@ export function detectOcrTableHeaderRowIndex(
   }
 
   const headerLikeRows = rows
-    .map((row) => ({ ...row, score: headerLikeScore(row.cells) }))
+    .map((row) => ({
+      ...row,
+      score:
+        headerLikeScore(row.cells) +
+        (row.cells.some((cell) => cell.isExplicitHeader) ? 0.75 : 0),
+    }))
     .sort(
       (left, right) =>
         right.score - left.score || left.rowIndex - right.rowIndex,
@@ -124,6 +129,14 @@ function headerLikeScore(cells: OcrTableHeaderCell[]) {
     if (text.length > 45) {
       score -= 1;
     }
+  }
+
+  const firstCell = [...cells].sort(
+    (left, right) => left.columnIndex - right.columnIndex,
+  )[0];
+
+  if (firstCell && /^[A-Z]{1,5}[-_]?\d{2,}$/i.test(firstCell.text.trim())) {
+    score -= 3;
   }
 
   return score;
