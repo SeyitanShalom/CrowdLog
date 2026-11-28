@@ -1697,10 +1697,10 @@ export function TemplateBuilder() {
                 CrowdLog
               </h1>
               <div className="hidden sm:block">
-                <p className="text-xs font-semibold uppercase tracking-[0.13em] text-[#5d746a]">
-                  CrowdLog workspace
+                <p className="text-base font-semibold uppercase tracking-tight text-[#5d746a]">
+                  CrowdLog
                 </p>
-                <h1 className="mt-0.5 text-base font-semibold tracking-tight text-[#1f2d28] sm:text-xl">
+                <h1 className="mt-0.5 text-xs font-semibold tracking-[0.1px] text-[#1f2d28] sm:text-xl">
                   Attendance management
                 </h1>
               </div>
